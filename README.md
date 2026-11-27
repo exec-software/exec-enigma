@@ -45,6 +45,10 @@ with explicit byte and key budgets. Goetic uses the typed Matrix package for
 durable workspace storage on a qualified Linux development SDK.
 [Record package](ext/enigma-records/README.md) · [Consumer validation](docs/validation.md#goetic-record-consumer--2026-11-21)
 
+The work companion records handoffs and prior attempts. Agents and people can
+check whether the record versions behind an entry have changed before picking
+up the task. [Work package](ext/enigma-work/README.md)
+
 Authority follows Anomalous's model, currently implemented as a trusted-host
 policy fixture. Matrix fields are public: this is **not isolation against hostile
 code in the same process**. Context identity and fresh logical ticks come from

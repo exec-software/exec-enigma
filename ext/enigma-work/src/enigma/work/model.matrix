@@ -1,0 +1,237 @@
+book enigma.work.model
+
+read everything from nil.std.nildata
+read everything from nil.std.core.option
+read everything from nil.std.core.result
+read from_byte from nil.std.text
+read exact_object, field_number, field_text, field_value from enigma.persistence
+read bytes_of, hex_id_ok from enigma.durable_io
+read valid_key, valid_utf8 from enigma.records.bytes
+
+!!! Version zero records observed absence. Generation describes the manifest
+!!! that supplied the versions. Database identity keeps versions store-local.
+public work_inputs begin record
+    field database_id as text
+    field generation as number
+    field keys as array of text
+    field versions as array of number
+end record
+
+public work_entry begin record
+    field kind as text
+    field task as text
+    field summary as text
+    field outcome as text
+    field next_step as text
+    field inputs as work_inputs
+end record
+
+public blank_work_inputs returns work_inputs begin paragraph
+    give build work_inputs with database_id being "", generation being 0, keys being [], versions being []
+end paragraph
+
+public blank_work_entry returns work_entry begin paragraph
+    give build work_entry with kind being "", task being "", summary being "", outcome being "", next_step being "",
+        inputs being (blank_work_inputs with nothing)
+end paragraph
+
+valid_revision receives amount as number returns boolean begin paragraph
+    give amount is at least 0 and amount is at most 2147483646
+end paragraph
+
+public valid_input_keys receives keys as array of text returns boolean begin paragraph
+    value count is the length of keys
+    when count is less than 1 or count is greater than 16 then give no end when
+    repeat for offset from 0 to count
+        value key is keys at offset
+        when not (valid_key with key being key) then give no end when
+        repeat for previous from 0 to offset
+            when (keys at previous) equals key then give no end when
+        end repeat
+    end repeat
+    give yes
+end paragraph
+
+public valid_inputs receives inputs as work_inputs returns boolean begin paragraph
+    when not (hex_id_ok with candidate being inputs.database_id) or not (valid_revision with amount being inputs.generation) or
+        not (valid_input_keys with keys being inputs.keys) or (the length of inputs.keys) does not equal (the length of inputs.versions) then
+        give no
+    end when
+    repeat for each version in inputs.versions
+        when not (valid_revision with amount being version) then give no end when
+    end repeat
+    give yes
+end paragraph
+
+valid_text_field receives field_text_value as text, minimum as number, maximum as number returns boolean begin paragraph
+    value amount is the length of field_text_value
+    when amount is less than minimum or amount is greater than maximum then give no end when
+    value octets is bytes_of with content being field_text_value
+    repeat for each octet in octets
+        when (octet becomes number) equals 0 then give no end when
+    end repeat
+    give valid_utf8 with content being octets
+end paragraph
+
+valid_entry receives entry as work_entry returns boolean begin paragraph
+    when entry.kind does not equal "handoff" and entry.kind does not equal "attempt" then give no end when
+    variable outcome_minimum as number is 0
+    when entry.kind equals "attempt" then set outcome_minimum to 1 end when
+    give (valid_text_field with field_text_value being entry.task, minimum being 1, maximum being 256) and
+        (valid_text_field with field_text_value being entry.summary, minimum being 1, maximum being 1024) and
+        (valid_text_field with field_text_value being entry.outcome, minimum being outcome_minimum, maximum being 1024) and
+        (valid_text_field with field_text_value being entry.next_step, minimum being 0, maximum being 512) and
+        (valid_inputs with inputs being entry.inputs)
+end paragraph
+
+!!! All values passed here have already been checked and bounded, including
+!!! the maximum escaped size staying below NILData's representation ceiling.
+encode_inputs receives inputs as work_inputs returns `Value` begin paragraph
+    variable keys is (new_array with nothing).unwrap with nothing
+    variable versions is (new_array with nothing).unwrap with nothing
+    repeat for each key in inputs.keys
+        set keys to (array_append with keys, (string_value with key).unwrap with nothing).unwrap with nothing
+    end repeat
+    repeat for each version in inputs.versions
+        set versions to (array_append with versions, (integer_value with formatted "{version}").unwrap with nothing).unwrap with nothing
+    end repeat
+    variable node is (new_object with nothing).unwrap with nothing
+    set node to (object_set with node, "database_id", (string_value with inputs.database_id).unwrap with nothing).unwrap with nothing
+    set node to (object_set with node, "generation", (integer_value with formatted "{inputs.generation}").unwrap with nothing).unwrap with nothing
+    set node to (object_set with node, "keys", keys).unwrap with nothing
+    set node to (object_set with node, "versions", versions).unwrap with nothing
+    give node
+end paragraph
+
+public encode_work_entry receives entry as work_entry returns Result of text, text begin paragraph
+    when not (valid_entry with entry being entry) then give Result.Error holding "invalid" end when
+    variable root is (new_object with nothing).unwrap with nothing
+    set root to (object_set with root, "schema", (string_value with "enigma.work.v1").unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "kind", (string_value with entry.kind).unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "task", (string_value with entry.task).unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "summary", (string_value with entry.summary).unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "outcome", (string_value with entry.outcome).unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "next_step", (string_value with entry.next_step).unwrap with nothing).unwrap with nothing
+    set root to (object_set with root, "inputs", (encode_inputs with inputs being entry.inputs)).unwrap with nothing
+    value encoded is to_json with root
+    when encoded.is_error with nothing then give Result.Error holding "invalid" end when
+    value payload is encoded.unwrap with nothing
+    when (the length of payload) is greater than 32768 then give Result.Error holding "limit" end when
+    give Result.Ok holding payload
+end paragraph
+
+array_count receives node as `Value` returns number begin paragraph
+    value shape is kind with node
+    when shape.is_error with nothing or (shape.unwrap with nothing) does not equal "array" then give minus 1 end when
+    value amount is size with node
+    when amount.is_error with nothing then give minus 1 end when
+    give amount.unwrap with nothing
+end paragraph
+
+decode_inputs receives node as `Value` returns work_inputs begin paragraph
+    value fields as array of text is ["database_id", "generation", "keys", "versions"]
+    when not (exact_object with node being node, keys being fields) then give blank_work_inputs with nothing end when
+    value database_id is field_text with node being node, key being "database_id"
+    value generation is field_number with node being node, key being "generation"
+    value key_nodes is field_value with node being node, key being "keys"
+    value version_nodes is field_value with node being node, key being "versions"
+    value count is array_count with node being key_nodes
+    when database_id.is_error with nothing or generation.is_error with nothing or count is less than 1 or count is greater than 16 or
+        count does not equal (array_count with node being version_nodes) then
+        give blank_work_inputs with nothing
+    end when
+    variable keys as array of text is []
+    variable versions as array of number is []
+    repeat for offset from 0 to count
+        !!! The exact array shapes and offset bounds ensure both elements exist.
+        value key_node is ((array_get with key_nodes, offset).unwrap with nothing).unwrap with nothing
+        value version_node is ((array_get with version_nodes, offset).unwrap with nothing).unwrap with nothing
+        value key is text_value with key_node
+        value version_kind is kind with version_node
+        when key.is_error with nothing or version_kind.is_error with nothing or (version_kind.unwrap with nothing) does not equal "integer" then
+            give blank_work_inputs with nothing
+        end when
+        value version is as_i64 with version_node
+        when version.is_error with nothing then give blank_work_inputs with nothing end when
+        append (key.unwrap with nothing) to keys
+        append (version.unwrap with nothing) to versions
+    end repeat
+    give build work_inputs with database_id being (database_id.unwrap with nothing), generation being (generation.unwrap with nothing),
+        keys being keys, versions being versions
+end paragraph
+
+public decode_work_entry receives payload as text returns Result of work_entry, text begin paragraph
+    when (the length of payload) is greater than 32768 then give Result.Error holding "corrupt" end when
+    value parsed is from_json with payload
+    when parsed.is_error with nothing then give Result.Error holding "corrupt" end when
+    value root is parsed.unwrap with nothing
+    value fields as array of text is ["schema", "kind", "task", "summary", "outcome", "next_step", "inputs"]
+    when not (exact_object with node being root, keys being fields) then give Result.Error holding "corrupt" end when
+    value schema is field_text with node being root, key being "schema"
+    value entry_kind is field_text with node being root, key being "kind"
+    value task is field_text with node being root, key being "task"
+    value summary is field_text with node being root, key being "summary"
+    value outcome is field_text with node being root, key being "outcome"
+    value next_step is field_text with node being root, key being "next_step"
+    when schema.is_error with nothing or (schema.unwrap with nothing) does not equal "enigma.work.v1" or entry_kind.is_error with nothing or
+        task.is_error with nothing or summary.is_error with nothing or outcome.is_error with nothing or next_step.is_error with nothing then
+        give Result.Error holding "corrupt"
+    end when
+    value inputs is decode_inputs with node being (field_value with node being root, key being "inputs")
+    value entry is build work_entry with kind being (entry_kind.unwrap with nothing), task being (task.unwrap with nothing),
+        summary being (summary.unwrap with nothing), outcome being (outcome.unwrap with nothing),
+        next_step being (next_step.unwrap with nothing), inputs being inputs
+    when not (valid_entry with entry being entry) then give Result.Error holding "corrupt" end when
+    give Result.Ok holding entry
+end paragraph
+
+note if_test_mode
+sample_entry returns work_entry begin paragraph
+    value versions as array of number is [2, 0]
+    value inputs is build work_inputs with database_id being "0123456789abcdef0123456789abcdef", generation being 3,
+        keys being ["sdk", "report:Ω"], versions being versions
+    give build work_entry with kind being "attempt", task being "fixture:42", summary being "Test " plus quote plus "native" plus quote,
+        outcome being "Missing dependency" plus newline plus "λ", next_step being "Check SDK", inputs being inputs
+end paragraph
+
+note suite "enigma.work.model"
+work_entry_preserves_escapes_and_absent_input_after_roundtrip begin test
+    value entry is sample_entry with nothing
+    value payload is (encode_work_entry with entry being entry).unwrap with nothing
+    value restored is (decode_work_entry with payload being payload).unwrap with nothing
+    expect restored.summary equals entry.summary
+    expect restored.outcome equals entry.outcome
+    expect restored.inputs.database_id equals entry.inputs.database_id
+    expect (restored.inputs.keys at 1) equals "report:Ω"
+    expect (restored.inputs.versions at 1) equals 0
+    expect (encode_work_entry with entry being restored).unwrap with nothing equals payload
+end test
+
+note suite "enigma.work.model"
+work_entry_refuses_duplicate_inputs_and_wrong_version_value_types begin test
+    variable entry is sample_entry with nothing
+    set entry.inputs.keys to ["sdk", "sdk"]
+    value encoded is encode_work_entry with entry being entry
+    expect encoded.is_error with nothing
+    expect (encoded.unwrap_error with nothing) equals "invalid"
+
+    value payload is (encode_work_entry with entry being (sample_entry with nothing)).unwrap with nothing
+    value root is (from_json with payload).unwrap with nothing
+    value inputs is field_value with node being root, key being "inputs"
+    value versions is (from_json with "[2,0.0]").unwrap with nothing
+    value changed_inputs is (object_set with inputs, "versions", versions).unwrap with nothing
+    value changed_root is (object_set with root, "inputs", changed_inputs).unwrap with nothing
+    value changed_payload is (to_json with changed_root).unwrap with nothing
+    expect (decode_work_entry with payload being changed_payload).is_error with nothing
+end test
+
+note suite "enigma.work.model"
+work_entry_refuses_escaped_nul_and_extra_fields_in_a_body begin test
+    value payload is (encode_work_entry with entry being (sample_entry with nothing)).unwrap with nothing
+    value root is (from_json with payload).unwrap with nothing
+    value nul_text is (from_json with (quote plus "bad" plus (from_byte with code being 92) plus "u0000" plus "text" plus quote)).unwrap with nothing
+    value changed_root is (object_set with root, "summary", nul_text).unwrap with nothing
+    expect (decode_work_entry with payload being ((to_json with changed_root).unwrap with nothing)).is_error with nothing
+    value extra_root is (object_set with root, "grant", (integer_value with "1").unwrap with nothing).unwrap with nothing
+    expect (decode_work_entry with payload being ((to_json with extra_root).unwrap with nothing)).is_error with nothing
+end test

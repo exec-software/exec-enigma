@@ -1,0 +1,17 @@
+nildata 1
+object
+  schema is "nil.project.v1"
+  name is "enigma-work-probe"
+  entry is "main.matrix"
+  includePaths is an array
+    item is "../../src"
+    item is "../../ext/enigma-records/src"
+    item is "../../ext/enigma-work/src"
+  end array
+  outputDirectory is "../../build/work-probe"
+  analysis is an object
+    disabledRules is an array
+    end array
+    warningsAsErrors is true
+  end object
+end object

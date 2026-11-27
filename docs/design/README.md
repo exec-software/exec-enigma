@@ -58,6 +58,12 @@ compare-and-set versions, complete key enumeration, and separate byte authority.
 Goetic uses the profile on its pinned combined development SDK.
 [ENI-0009](ENI-0009-application-records.md) · [Consumer validation](../validation.md#goetic-record-consumer--2026-11-21)
 
+## Work handoffs
+
+The Matrix companion records handoffs and earlier attempts as ordinary
+application records. It checks whether named input versions changed between
+sessions under current authority. [ENI-0010](ENI-0010-work-handoffs.md)
+
 ## Authority direction
 
 Follow Anomalous's separation of entity identity, admitted session, and scoped

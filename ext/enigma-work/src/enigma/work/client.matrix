@@ -1,0 +1,193 @@
+book enigma.work.client
+
+read everything from nil.std.core.result
+read everything from nil.std.core.option
+read access_context from enigma.authority
+read bytes_of, text_of from enigma.durable_io
+read valid_key, compare_keys from enigma.records.bytes
+read record_key_batch from enigma.records.index
+read record_client from enigma.records.client
+read work_entry, work_inputs, blank_work_entry, blank_work_inputs, valid_inputs, valid_input_keys,
+    encode_work_entry, decode_work_entry from enigma.work.model
+
+public work_capture begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field inputs as work_inputs
+end record
+
+public work_check begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field changes as array of text
+    field observed_versions as array of number
+    field generation as number
+end record
+
+public work_save begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field version as number
+end record
+
+public work_load begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field version as number
+    field entry as work_entry
+end record
+
+failed_capture receives code as text, confirmed as boolean, outcome_unknown as boolean returns work_capture begin paragraph
+    give build work_capture with code being code, confirmed being confirmed, outcome_unknown being outcome_unknown,
+        inputs being (blank_work_inputs with nothing)
+end paragraph
+
+failed_check receives captured as work_capture returns work_check begin paragraph
+    give build work_check with code being captured.code, confirmed being captured.confirmed, outcome_unknown being captured.outcome_unknown,
+        changes being [], observed_versions being [], generation being 0
+end paragraph
+
+failed_load receives code as text, confirmed as boolean, outcome_unknown as boolean returns work_load begin paragraph
+    give build work_load with code being code, confirmed being confirmed, outcome_unknown being outcome_unknown,
+        version being 0, entry being (blank_work_entry with nothing)
+end paragraph
+
+!!! The underlying batch is complete and sorted by unsigned UTF-8 key order.
+!!! Zero denotes absence only after a complete authorized listing.
+observed_version receives entries as record_key_batch, key as text returns number begin paragraph
+    variable lower as number is 0
+    variable upper as number is entries.count with nothing
+    repeat while lower is less than upper
+        value middle is lower plus ((upper minus lower) over 2)
+        value found is entries.get with index being middle
+        when found.is_none with nothing then give minus 1 end when
+        value item is found.unwrap with nothing
+        value order is compare_keys with left being item.key, right being key
+        when order equals 0 then give item.version end when
+        when order is less than 0 then
+            set lower to middle plus 1
+        otherwise
+            set upper to middle
+        end when
+    end repeat
+    give 0
+end paragraph
+
+public capture_work_inputs receives client as record_client, caller as access_context, keys as array of text,
+    max_keys as number, max_metadata_bytes as number, max_scan_keys as number returns work_capture begin paragraph
+    when not (valid_input_keys with keys being keys) then
+        give failed_capture with code being "invalid", confirmed being yes, outcome_unknown being no
+    end when
+    value listed is client.list_keys with caller being caller, max_keys being max_keys,
+        max_metadata_bytes being max_metadata_bytes, max_scan_keys being max_scan_keys
+    when not listed.confirmed then
+        give failed_capture with code being listed.failure.code, confirmed being no, outcome_unknown being listed.failure.outcome_unknown
+    end when
+    when listed.receipt.code does not equal "ok" then
+        give failed_capture with code being listed.receipt.code, confirmed being yes, outcome_unknown being no
+    end when
+    when not listed.receipt.complete then
+        give failed_capture with code being "incomplete", confirmed being yes, outcome_unknown being no
+    end when
+    value state is client.owner.describe_state with nothing
+    when state.code does not equal "ok" then
+        give failed_capture with code being state.code, confirmed being no, outcome_unknown being no
+    end when
+    when listed.receipt.generation does not equal state.generation then
+        give failed_capture with code being "incomplete", confirmed being yes, outcome_unknown being no
+    end when
+    variable captured_keys as array of text is []
+    variable versions as array of number is []
+    repeat for each key in keys
+        value version is observed_version with entries being listed.receipt.entries, key being key
+        when version is less than 0 then
+            give failed_capture with code being "incomplete", confirmed being yes, outcome_unknown being no
+        end when
+        append key to captured_keys
+        append version to versions
+    end repeat
+    value captured is build work_inputs with database_id being state.database_id, generation being state.generation,
+        keys being captured_keys, versions being versions
+    give build work_capture with code being "ok", confirmed being yes, outcome_unknown being no, inputs being captured
+end paragraph
+
+public check_work_inputs receives client as record_client, caller as access_context, inputs as work_inputs,
+    max_keys as number, max_metadata_bytes as number, max_scan_keys as number returns work_check begin paragraph
+    when not (valid_inputs with inputs being inputs) then
+        give failed_check with captured being (failed_capture with code being "invalid", confirmed being yes, outcome_unknown being no)
+    end when
+    value captured is capture_work_inputs with client being client, caller being caller, keys being inputs.keys,
+        max_keys being max_keys, max_metadata_bytes being max_metadata_bytes, max_scan_keys being max_scan_keys
+    when captured.code does not equal "ok" then
+        give failed_check with captured being captured
+    end when
+    when captured.inputs.database_id does not equal inputs.database_id then
+        give failed_check with captured being (failed_capture with code being "foreign", confirmed being yes, outcome_unknown being no)
+    end when
+    when captured.inputs.generation is less than inputs.generation then
+        give failed_check with captured being (failed_capture with code being "incomplete", confirmed being yes, outcome_unknown being no)
+    end when
+    variable changes as array of text is []
+    variable observed_versions as array of number is []
+    repeat for index from 0 to (the length of inputs.keys)
+        value observed is captured.inputs.versions at index
+        when observed does not equal (inputs.versions at index) then
+            append (inputs.keys at index) to changes
+            append observed to observed_versions
+        end when
+    end repeat
+    variable code as text is "unchanged"
+    when (the length of changes) is greater than 0 then set code to "changed" end when
+    give build work_check with code being code, confirmed being yes, outcome_unknown being no,
+        changes being changes, observed_versions being observed_versions, generation being captured.inputs.generation
+end paragraph
+
+public save_work_entry receives client as record_client, caller as access_context, key as text, entry as work_entry,
+    expected_version as number returns work_save begin paragraph
+    when not (valid_key with key being key) then
+        give build work_save with code being "invalid", confirmed being yes, outcome_unknown being no, version being 0
+    end when
+    value encoded is encode_work_entry with entry being entry
+    when encoded.is_error with nothing then
+        give build work_save with code being (encoded.unwrap_error with nothing), confirmed being yes, outcome_unknown being no, version being 0
+    end when
+    repeat for each dependency in entry.inputs.keys
+        when key equals dependency then
+            give build work_save with code being "invalid", confirmed being yes, outcome_unknown being no, version being 0
+        end when
+    end repeat
+    value stored is client.put with caller being caller, key being key,
+        content being (bytes_of with content being (encoded.unwrap with nothing)), expected_version being expected_version
+    when not stored.confirmed then
+        give build work_save with code being stored.failure.code, confirmed being no, outcome_unknown being stored.failure.outcome_unknown, version being 0
+    end when
+    give build work_save with code being stored.receipt.code, confirmed being yes, outcome_unknown being no, version being stored.receipt.version
+end paragraph
+
+public load_work_entry receives client as record_client, caller as access_context, key as text returns work_load begin paragraph
+    value loaded is client.get with caller being caller, key being key, max_body_bytes being 32768
+    when not loaded.confirmed then
+        give failed_load with code being loaded.failure.code, confirmed being no, outcome_unknown being loaded.failure.outcome_unknown
+    end when
+    when loaded.receipt.code does not equal "ok" then
+        give failed_load with code being loaded.receipt.code, confirmed being yes, outcome_unknown being no
+    end when
+    when not loaded.receipt.found then
+        give failed_load with code being "not_found", confirmed being yes, outcome_unknown being no
+    end when
+    repeat for each octet in loaded.receipt.content
+        when (octet becomes number) equals 0 then
+            give failed_load with code being "invalid_entry", confirmed being yes, outcome_unknown being no
+        end when
+    end repeat
+    value decoded is decode_work_entry with payload being (text_of with octets being loaded.receipt.content)
+    when decoded.is_error with nothing then
+        give failed_load with code being "invalid_entry", confirmed being yes, outcome_unknown being no
+    end when
+    give build work_load with code being "ok", confirmed being yes, outcome_unknown being no,
+        version being loaded.receipt.version, entry being (decoded.unwrap with nothing)
+end paragraph

@@ -1,0 +1,180 @@
+book enigma.validation.work
+
+read arg, arg_count from nil.std.system
+read access_context from enigma.authority
+read bytes_of from enigma.durable_io
+read record_access_limits from enigma.records.authority
+read create_record_database, open_record_database, record_owner from enigma.records.session
+read connect_records, provision_record_host, record_client from enigma.records.client
+read work_entry, work_inputs from enigma.work.model
+read capture_work_inputs, save_work_entry, load_work_entry, check_work_inputs, work_check from enigma.work.client
+
+work_context receives session_id as number, tick as number returns access_context begin paragraph
+    give build access_context with entity being "test:work", session being session_id, audience being "enigma", tick being tick
+end paragraph
+
+admit receives owner as record_owner, session_id as number, tick as number returns record_client begin paragraph
+    value limits is build record_access_limits with max_read_bytes being 32768, max_write_bytes being 32768,
+        max_scan_keys being 16, max_list_keys being 16, max_list_metadata_bytes being 4096
+    value issued is provision_record_host with owner being owner, entity being "test:work", session_id being session_id,
+        actions being 7, expires being 100, limits being limits, tick being tick
+    expect issued.confirmed
+    expect issued.receipt.code equals "ok"
+    give connect_records with owner being owner, grant_id being issued.receipt.grant_id
+end paragraph
+
+save_text receives client as record_client, caller as access_context, key as text,
+    content as text, version as number returns number begin paragraph
+    value stored is client.put with caller being caller, key being key,
+        content being (bytes_of with content being content), expected_version being version
+    expect stored.confirmed
+    expect stored.receipt.code equals "ok"
+    give stored.receipt.version
+end paragraph
+
+inspect_inputs receives client as record_client, caller as access_context, inputs as work_inputs returns work_check begin paragraph
+    give check_work_inputs with client being client, caller being caller, inputs being inputs,
+        max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 16
+end paragraph
+
+seed_work receives directory as text returns override integer begin paragraph
+    value created is create_record_database with directory being directory, scope being "work-probe"
+    expect created.code equals "created"
+    value owner is created.owner
+    value client is admit with owner being owner, session_id being 1, tick being 1
+    value caller is work_context with session_id being 1, tick being 2
+
+    expect (save_text with client being client, caller being caller, key being "sdk/current", content being "SDK A", version being 0) equals 1
+    expect (save_text with client being client, caller being caller, key being "config/static", content being "Debug", version being 0) equals 2
+    value watched as array of text is ["sdk/current", "test/result", "config/static"]
+    value captured is capture_work_inputs with client being client, caller being caller, keys being watched,
+        max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 16
+    expect captured.confirmed
+    expect captured.code equals "ok"
+    expect (captured.inputs.versions at 0) equals 1
+    expect (captured.inputs.versions at 1) equals 0
+    expect (captured.inputs.versions at 2) equals 2
+
+    value handoff is build work_entry with kind being "handoff", task being "issue:42",
+        summary being "The native build needs another check.", outcome being "",
+        next_step being "Rerun the native test after the SDK changes.", inputs being captured.inputs
+    value previous_run is build work_entry with kind being "attempt", task being "issue:42",
+        summary being "Ran the native build on SDK A.", outcome being "A required dependency was missing.",
+        next_step being "Check the SDK version before rerunning.", inputs being captured.inputs
+    value handoff_write is save_work_entry with client being client, caller being caller,
+        key being "work/42/handoff", entry being handoff, expected_version being 0
+    expect handoff_write.confirmed
+    expect handoff_write.code equals "ok"
+    expect handoff_write.version equals 3
+    value attempt_write is save_work_entry with client being client, caller being caller,
+        key being "work/42/attempt/native", entry being previous_run, expected_version being 0
+    expect attempt_write.confirmed
+    expect attempt_write.code equals "ok"
+    expect attempt_write.version equals 4
+    value duplicate is save_work_entry with client being client, caller being caller,
+        key being "work/42/attempt/native", entry being previous_run, expected_version being 0
+    expect duplicate.confirmed
+    expect duplicate.code equals "conflict"
+    expect duplicate.version equals 0
+    expect not duplicate.outcome_unknown
+
+    expect (owner.close with nothing) equals "closed"
+    say "handoff saved"
+    give 0
+end paragraph
+
+resume_work receives directory as text returns override integer begin paragraph
+    value opened is open_record_database with directory being directory, max_verify_bytes being 65536
+    expect opened.code equals "ready"
+    value owner is opened.owner
+    value retired is connect_records with owner being owner, grant_id being 1
+    value retired_caller is work_context with session_id being 1, tick being 2
+    value retired_load is load_work_entry with client being retired, caller being retired_caller, key being "work/42/handoff"
+    expect retired_load.confirmed
+    expect retired_load.code equals "denied"
+    expect retired_load.version equals 0
+    expect retired_load.entry.summary equals ""
+
+    value client is admit with owner being owner, session_id being 2, tick being 3
+    value caller is work_context with session_id being 2, tick being 4
+    value handoff is load_work_entry with client being client, caller being caller, key being "work/42/handoff"
+    expect handoff.confirmed
+    expect handoff.code equals "ok"
+    expect handoff.version equals 3
+    expect handoff.entry.kind equals "handoff"
+    expect handoff.entry.next_step equals "Rerun the native test after the SDK changes."
+    value previous_run is load_work_entry with client being client, caller being caller, key being "work/42/attempt/native"
+    expect previous_run.confirmed
+    expect previous_run.code equals "ok"
+    expect previous_run.version equals 4
+    expect previous_run.entry.kind equals "attempt"
+    expect previous_run.entry.outcome equals "A required dependency was missing."
+
+    variable foreign_id as text is "00000000000000000000000000000000"
+    when foreign_id equals handoff.entry.inputs.database_id then
+        set foreign_id to "11111111111111111111111111111111"
+    end when
+    value foreign_inputs is build work_inputs with database_id being foreign_id, generation being handoff.entry.inputs.generation,
+        keys being handoff.entry.inputs.keys, versions being handoff.entry.inputs.versions
+    value foreign is inspect_inputs with client being client, caller being caller, inputs being foreign_inputs
+    expect foreign.confirmed
+    expect foreign.code equals "foreign"
+    expect (the length of foreign.changes) equals 0
+    expect (the length of foreign.observed_versions) equals 0
+    expect foreign.generation equals 0
+
+    expect (save_text with client being client, caller being caller, key being "activity/ping", content being "Unrelated update", version being 0) equals 5
+    value stable is inspect_inputs with client being client, caller being caller, inputs being handoff.entry.inputs
+    expect stable.confirmed
+    expect stable.code equals "unchanged"
+    expect (the length of stable.changes) equals 0
+    expect stable.generation is greater than handoff.entry.inputs.generation
+
+    value limited is check_work_inputs with client being client, caller being caller, inputs being previous_run.entry.inputs,
+        max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 1
+    expect limited.confirmed
+    expect limited.code equals "limit"
+    expect not limited.outcome_unknown
+    expect (the length of limited.changes) equals 0
+    expect (the length of limited.observed_versions) equals 0
+    expect limited.generation equals 0
+
+    value denied is inspect_inputs with client being retired,
+        caller being (work_context with session_id being 1, tick being 4), inputs being previous_run.entry.inputs
+    expect denied.confirmed
+    expect denied.code equals "denied"
+    expect (the length of denied.changes) equals 0
+    expect (the length of denied.observed_versions) equals 0
+    expect denied.generation equals 0
+
+    expect (save_text with client being client, caller being caller, key being "sdk/current", content being "SDK B", version being 1) equals 6
+    expect (save_text with client being client, caller being caller, key being "test/result", content being "Native build passed", version being 0) equals 7
+    value refreshed_handoff is inspect_inputs with client being client, caller being caller, inputs being handoff.entry.inputs
+    value refreshed_attempt is inspect_inputs with client being client, caller being caller, inputs being previous_run.entry.inputs
+    expect refreshed_handoff.code equals "changed"
+    expect refreshed_attempt.confirmed
+    expect refreshed_attempt.code equals "changed"
+    expect (the length of refreshed_attempt.changes) equals 2
+    expect (refreshed_attempt.changes at 0) equals "sdk/current"
+    expect (refreshed_attempt.changes at 1) equals "test/result"
+    expect (refreshed_attempt.observed_versions at 0) equals 6
+    expect (refreshed_attempt.observed_versions at 1) equals 7
+    expect (owner.close with nothing) equals "closed"
+
+    say "handoff needs review"
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    when (arg_count with nothing) does not equal 2 then
+        give 2
+    end when
+    value mode is arg with index being 0
+    value directory is arg with index being 1
+    when mode equals "create" then
+        give seed_work with directory being directory
+    otherwise when mode equals "resume" then
+        give resume_work with directory being directory
+    end when
+    give 2
+end paragraph

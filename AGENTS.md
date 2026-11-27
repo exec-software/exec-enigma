@@ -10,7 +10,8 @@ Enigma is a new database-engine seed written in Matrix. Read `README.md`,
 `docs/design/ENI-0006-bounded-evidence-discovery.md`,
 `docs/design/ENI-0007-application-sessions.md`,
 `docs/design/ENI-0008-bounded-capacity.md`,
-`docs/design/ENI-0009-application-records.md`, and `SECURITY.md` before
+`docs/design/ENI-0009-application-records.md`,
+`docs/design/ENI-0010-work-handoffs.md`, and `SECURITY.md` before
 extending the engine.
 
 - Implement engine behavior in Matrix under `src/enigma/` with `.matrix` files.
@@ -60,3 +61,9 @@ extending the engine.
   API or storage. Validate the private body before publishing its manifest, and
   validate every referenced body before reopening. Keep record byte ceilings
   distinct from evidence work and output rights.
+
+
+- Work handoffs and prior attempts use ordinary records through
+  `ext/enigma-work`. Run `./scripts/test-work.sh` for changes to that package.
+  A version comparison requires a complete authorized inventory and never
+  conveys authority for a later write.
