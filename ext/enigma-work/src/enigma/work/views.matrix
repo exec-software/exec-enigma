@@ -1,0 +1,67 @@
+book enigma.work.views
+
+read access_context from enigma.authority
+read record_key_limit, record_list_bytes_limit from enigma.records.index
+read record_client from enigma.records.client
+read work_entry, blank_work_entry from enigma.work.model
+read work_check, load_work_entry, check_work_inputs from enigma.work.client
+
+public work_view_info begin record
+    field name as text
+    field version as number
+    field operations as array of text
+    field max_body_bytes as number
+    field max_input_keys as number
+    field max_scan_keys as number
+    field max_metadata_bytes as number
+end record
+
+public handoff_report begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field version as number
+    field entry as work_entry
+    field freshness as work_check
+end record
+
+public describe_resume_work returns work_view_info begin paragraph
+    give build work_view_info with name being "resume_work", version being 1, operations being ["get", "list_keys"],
+        max_body_bytes being 32768, max_input_keys being 16, max_scan_keys being (record_key_limit with nothing),
+        max_metadata_bytes being (record_list_bytes_limit with nothing)
+end paragraph
+
+refused_report receives code as text, confirmed as boolean, outcome_unknown as boolean returns handoff_report begin paragraph
+    value empty_check is build work_check with code being code, confirmed being confirmed, outcome_unknown being outcome_unknown,
+        changes being [], observed_versions being [], generation being 0
+    give build handoff_report with code being code, confirmed being confirmed, outcome_unknown being outcome_unknown,
+        version being 0, entry being (blank_work_entry with nothing), freshness being empty_check
+end paragraph
+
+!!! Both operations run synchronously in the same record owner. The get may
+!!! durably advance the security clock. Record the generation after that get,
+!!! and require the authorized listing to observe that same generation.
+public resume_work receives client as record_client, caller as access_context, handoff_key as text,
+    max_keys as number, max_metadata_bytes as number, max_scan_keys as number returns handoff_report begin paragraph
+    value saved is load_work_entry with client being client, caller being caller, key being handoff_key
+    when not saved.confirmed or saved.code does not equal "ok" then
+        give refused_report with code being saved.code, confirmed being saved.confirmed, outcome_unknown being saved.outcome_unknown
+    end when
+    when saved.entry.kind does not equal "handoff" then
+        give refused_report with code being "invalid_entry", confirmed being yes, outcome_unknown being no
+    end when
+    value state is client.owner.describe_state with nothing
+    when state.code does not equal "ok" then
+        give refused_report with code being state.code, confirmed being no, outcome_unknown being no
+    end when
+    value checked is check_work_inputs with client being client, caller being caller, inputs being saved.entry.inputs,
+        max_keys being max_keys, max_metadata_bytes being max_metadata_bytes, max_scan_keys being max_scan_keys
+    when not checked.confirmed or (checked.code does not equal "unchanged" and checked.code does not equal "changed") then
+        give refused_report with code being checked.code, confirmed being checked.confirmed, outcome_unknown being checked.outcome_unknown
+    end when
+    when checked.generation does not equal state.generation then
+        give refused_report with code being "incomplete", confirmed being yes, outcome_unknown being no
+    end when
+    give build handoff_report with code being "ok", confirmed being yes, outcome_unknown being no,
+        version being saved.version, entry being saved.entry, freshness being checked
+end paragraph

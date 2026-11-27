@@ -60,6 +60,19 @@ history. It requires separate right `16`; withdraw-own right `4` alone does
 not authorize compaction. The client and any future text parser must preserve
 that distinction rather than infer maintenance authority from a write grant.
 
+## Named views in Matrix
+
+The first named read-only view is `resume_work` in `enigma.work.views`.
+It takes a connected record client, current caller context, a handoff key,
+and explicit listing limits. It returns a typed handoff with its freshness
+check from one observed manifest generation.
+
+`describe_resume_work()` exposes the view name and version, the record
+operations it calls, and its resource ceilings. The trusted application
+chooses which views to expose. Use ordinary Matrix calls to invoke this view.
+The `begin view` text grammar and guarded write commands remain design
+directions. See the [work package](../../ext/enigma-work/README.md).
+
 ## Future Matrix-inspired text
 
 A human-readable language should borrow Matrix's named inputs, explicit types,

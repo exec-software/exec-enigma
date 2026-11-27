@@ -59,6 +59,7 @@ class WorkTests(unittest.TestCase):
                 self.assertEqual(before["database_id"], after["database_id"])
                 self.assertNotEqual(before["incarnation"], after["incarnation"])
                 self.assertEqual(after["authority"]["retired_through"], 1)
+                self.assertEqual(after["authority"]["clock_floor"], 5)
                 self.assertEqual(after["sequence"], 7)
                 self.assertEqual(observed["sdk/current"][2].read_bytes(), b"SDK B")
                 self.assertEqual(observed["test/result"][2].read_bytes(), b"Native build passed")

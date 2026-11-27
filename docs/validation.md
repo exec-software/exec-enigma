@@ -1,5 +1,19 @@
 # Development validation
 
+## Named resume view — 2026-11-26
+
+`./scripts/test-work.sh` passes on VM and native with the same development SDK
+used for the work companion. The restart fixture calls the named view and
+checks its descriptor, the unchanged result, and both changed inputs from
+one observed generation. A caller with read authority can load the handoff
+directly. Without list authority, the view refuses and clears the handoff and
+comparison. An insufficient scan budget also clears the report.
+
+The view can persist the caller's newer clock floor. The external filesystem
+check verifies the new floor while the application record sequence and saved
+handoff bytes stay fixed. `./scripts/test.sh` passes the ordinary evidence and
+host regression suite.
+
 ## Work handoffs and attempt history — 2026-11-26
 
 The companion source is

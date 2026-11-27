@@ -57,6 +57,22 @@ runs the record API's integrity checks. A later write requires its own
 version preconditions. The check cannot detect a coherent operator rollback
 that restores and reuses the same versions.
 
+## Resume view
+
+`resume_work` loads the handoff through the ordinary record client, observes
+the owner's generation, and checks the handoff's input versions.
+It returns the entry and comparison only when both reads succeeded and the
+comparison used that same generation. These operations run synchronously on
+one owner. The first read can advance the security clock before the view
+records the generation.
+
+The view takes an explicit handoff key and listing bounds. Attempt records
+continue to use the separate load and check operations. If a read, authority
+check, listing budget, or generation check fails, the view returns a blank
+entry and comparison and preserves the operation's status and uncertainty.
+The view performs no application-record writes. Authority checks can still
+persist a security clock advance.
+
 ## Authority and storage
 
 Apps use the same trusted host and ordinary record API. Current list authority

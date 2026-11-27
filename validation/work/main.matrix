@@ -8,16 +8,17 @@ read create_record_database, open_record_database, record_owner from enigma.reco
 read connect_records, provision_record_host, record_client from enigma.records.client
 read work_entry, work_inputs from enigma.work.model
 read capture_work_inputs, save_work_entry, load_work_entry, check_work_inputs, work_check from enigma.work.client
+read resume_work, describe_resume_work, handoff_report from enigma.work.views
 
 work_context receives session_id as number, tick as number returns access_context begin paragraph
     give build access_context with entity being "test:work", session being session_id, audience being "enigma", tick being tick
 end paragraph
 
-admit receives owner as record_owner, session_id as number, tick as number returns record_client begin paragraph
+admit receives owner as record_owner, session_id as number, tick as number, actions as number returns record_client begin paragraph
     value limits is build record_access_limits with max_read_bytes being 32768, max_write_bytes being 32768,
         max_scan_keys being 16, max_list_keys being 16, max_list_metadata_bytes being 4096
     value issued is provision_record_host with owner being owner, entity being "test:work", session_id being session_id,
-        actions being 7, expires being 100, limits being limits, tick being tick
+        actions being actions, expires being 100, limits being limits, tick being tick
     expect issued.confirmed
     expect issued.receipt.code equals "ok"
     give connect_records with owner being owner, grant_id being issued.receipt.grant_id
@@ -37,11 +38,29 @@ inspect_inputs receives client as record_client, caller as access_context, input
         max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 16
 end paragraph
 
+view_handoff receives client as record_client, caller as access_context, key as text returns handoff_report begin paragraph
+    give resume_work with client being client, caller being caller, handoff_key being key,
+        max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 16
+end paragraph
+
+expect_empty_report receives report as handoff_report, code as text, confirmed as boolean returns nothing begin paragraph
+    expect report.code equals code
+    expect report.confirmed equals confirmed
+    expect not report.outcome_unknown
+    expect report.version equals 0
+    expect report.entry.summary equals ""
+    expect (the length of report.entry.inputs.keys) equals 0
+    expect (the length of report.freshness.changes) equals 0
+    expect (the length of report.freshness.observed_versions) equals 0
+    expect report.freshness.generation equals 0
+    give nothing
+end paragraph
+
 seed_work receives directory as text returns override integer begin paragraph
     value created is create_record_database with directory being directory, scope being "work-probe"
     expect created.code equals "created"
     value owner is created.owner
-    value client is admit with owner being owner, session_id being 1, tick being 1
+    value client is admit with owner being owner, session_id being 1, tick being 1, actions being 7
     value caller is work_context with session_id being 1, tick being 2
 
     expect (save_text with client being client, caller being caller, key being "sdk/current", content being "SDK A", version being 0) equals 1
@@ -83,7 +102,18 @@ seed_work receives directory as text returns override integer begin paragraph
     give 0
 end paragraph
 
-resume_work receives directory as text returns override integer begin paragraph
+resume_fixture receives directory as text returns override integer begin paragraph
+    value exposed is describe_resume_work with nothing
+    expect exposed.name equals "resume_work"
+    expect exposed.version equals 1
+    expect (the length of exposed.operations) equals 2
+    expect (exposed.operations at 0) equals "get"
+    expect (exposed.operations at 1) equals "list_keys"
+    expect exposed.max_body_bytes equals 32768
+    expect exposed.max_input_keys equals 16
+    expect exposed.max_scan_keys equals 2048
+    expect exposed.max_metadata_bytes equals 524288
+
     value opened is open_record_database with directory being directory, max_verify_bytes being 65536
     expect opened.code equals "ready"
     value owner is opened.owner
@@ -94,8 +124,18 @@ resume_work receives directory as text returns override integer begin paragraph
     expect retired_load.code equals "denied"
     expect retired_load.version equals 0
     expect retired_load.entry.summary equals ""
+    evaluate expect_empty_report with report being (view_handoff with client being retired, caller being retired_caller,
+        key being "work/42/handoff"), code being "denied", confirmed being yes
 
-    value client is admit with owner being owner, session_id being 2, tick being 3
+    value client is admit with owner being owner, session_id being 2, tick being 3, actions being 7
+    value read_only is admit with owner being owner, session_id being 3, tick being 3, actions being 1
+    value read_only_caller is work_context with session_id being 3, tick being 4
+    value readable is load_work_entry with client being read_only, caller being read_only_caller, key being "work/42/handoff"
+    expect readable.confirmed
+    expect readable.code equals "ok"
+    evaluate expect_empty_report with report being (view_handoff with client being read_only, caller being read_only_caller,
+        key being "work/42/handoff"), code being "denied", confirmed being yes
+
     value caller is work_context with session_id being 2, tick being 4
     value handoff is load_work_entry with client being client, caller being caller, key being "work/42/handoff"
     expect handoff.confirmed
@@ -109,6 +149,18 @@ resume_work receives directory as text returns override integer begin paragraph
     expect previous_run.version equals 4
     expect previous_run.entry.kind equals "attempt"
     expect previous_run.entry.outcome equals "A required dependency was missing."
+
+    value current is view_handoff with client being client, caller being caller, key being "work/42/handoff"
+    expect current.confirmed
+    expect current.code equals "ok"
+    expect current.version equals handoff.version
+    expect current.entry.next_step equals handoff.entry.next_step
+    expect current.freshness.code equals "unchanged"
+    expect current.freshness.generation equals (owner.describe_state with nothing).generation
+    evaluate expect_empty_report with report being (view_handoff with client being client, caller being caller,
+        key being "work/42/absent"), code being "not_found", confirmed being yes
+    evaluate expect_empty_report with report being (view_handoff with client being client, caller being caller,
+        key being "work/42/attempt/native"), code being "invalid_entry", confirmed being yes
 
     variable foreign_id as text is "00000000000000000000000000000000"
     when foreign_id equals handoff.entry.inputs.database_id then
@@ -138,6 +190,9 @@ resume_work receives directory as text returns override integer begin paragraph
     expect (the length of limited.changes) equals 0
     expect (the length of limited.observed_versions) equals 0
     expect limited.generation equals 0
+    value limited_view is resume_work with client being client, caller being caller, handoff_key being "work/42/handoff",
+        max_keys being 16, max_metadata_bytes being 4096, max_scan_keys being 1
+    evaluate expect_empty_report with report being limited_view, code being "limit", confirmed being yes
 
     value denied is inspect_inputs with client being retired,
         caller being (work_context with session_id being 1, tick being 4), inputs being previous_run.entry.inputs
@@ -159,7 +214,26 @@ resume_work receives directory as text returns override integer begin paragraph
     expect (refreshed_attempt.changes at 1) equals "test/result"
     expect (refreshed_attempt.observed_versions at 0) equals 6
     expect (refreshed_attempt.observed_versions at 1) equals 7
+
+    value previous_generation is (owner.describe_state with nothing).generation
+    value later_caller is work_context with session_id being 2, tick being 5
+    value refreshed_view is view_handoff with client being client, caller being later_caller, key being "work/42/handoff"
+    expect refreshed_view.confirmed
+    expect refreshed_view.code equals "ok"
+    expect refreshed_view.version equals handoff.version
+    expect refreshed_view.entry.summary equals handoff.entry.summary
+    expect refreshed_view.freshness.confirmed
+    expect refreshed_view.freshness.code equals "changed"
+    expect refreshed_view.freshness.generation equals previous_generation plus 1
+    expect refreshed_view.freshness.generation equals (owner.describe_state with nothing).generation
+    expect (the length of refreshed_view.freshness.changes) equals 2
+    expect (refreshed_view.freshness.changes at 0) equals "sdk/current"
+    expect (refreshed_view.freshness.changes at 1) equals "test/result"
+    expect (refreshed_view.freshness.observed_versions at 0) equals 6
+    expect (refreshed_view.freshness.observed_versions at 1) equals 7
     expect (owner.close with nothing) equals "closed"
+    evaluate expect_empty_report with report being (view_handoff with client being client, caller being caller,
+        key being "work/42/handoff"), code being "closed", confirmed being no
 
     say "handoff needs review"
     give 0
@@ -174,7 +248,7 @@ main returns override integer begin paragraph
     when mode equals "create" then
         give seed_work with directory being directory
     otherwise when mode equals "resume" then
-        give resume_work with directory being directory
+        give resume_fixture with directory being directory
     end when
     give 2
 end paragraph

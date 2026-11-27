@@ -15,6 +15,21 @@ development SDK as the record client.
 | `load_work_entry(client, caller, key)` | Read a typed entry and its current storage version. |
 | `check_work_inputs(client, caller, inputs, max_keys, max_metadata_bytes, max_scan_keys)` | Report `changed` or `unchanged` and the versions that changed. |
 
+Import `resume_work` and `describe_resume_work` from `enigma.work.views`
+to expose one named view. The descriptor reports version 1, the `get` and
+`list_keys` operations, and the hard resource ceilings.
+
+```matrix
+value report is resume_work with client being client, caller being caller,
+    handoff_key being "work/42/handoff", max_keys being 128,
+    max_metadata_bytes being 16384, max_scan_keys being 128
+```
+
+A confirmed `ok` report includes the handoff, its storage version, and
+`freshness` with the changed inputs and observed generation. A refusal
+clears the entry, version, and comparison data. The view uses both read
+and list authority. Its reads can commit a security clock advance.
+
 A handoff can hold a short summary and the next step. An attempt also needs
 an outcome, such as “blocked on a missing linker.” Capture the SDK configuration
 record as an input. If the SDK record changes, a later check flags the attempt
