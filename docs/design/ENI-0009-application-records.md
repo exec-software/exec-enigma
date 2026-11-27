@@ -64,6 +64,7 @@ and a synthetic create/reopen example.
 | `connect_records(owner, grant_id)` | `record_client` |
 | `record_client.get(caller, key, max_body_bytes)` | `record_reply<record_get_receipt>` |
 | `record_client.put(caller, key, content, expected_version)` | `record_reply<record_put_receipt>` |
+| `record_client.put_checked(caller, key, content, expected_version, guards)` | `record_reply<record_put_receipt>` |
 | `record_client.list_keys(caller, max_keys, max_metadata_bytes, max_scan_keys)` | `record_reply<record_list_receipt>` |
 | `record_client.revoke(caller)` | `record_reply<record_grant_receipt>` |
 | `record_client.delegate(caller, entity, session_id, actions, expires, limits)` | `record_reply<record_grant_receipt>` |
@@ -106,6 +107,11 @@ version. Each successful put increments the store's record sequence, including
 a replacement with identical bytes. Use the returned version since another
 key can consume intervening versions. The profile has no delete or historical
 body lookup.
+
+`put_checked` adds one to sixteen exact input versions to a one-record write.
+It requires current read and write authority and checks the input and
+destination versions under the same owner lock.
+[Guarded write contract](ENI-0011-guarded-record-writes.md)
 
 `list_keys` returns ordered entries from one manifest generation. Each
 `record_key_entry` has `key`, `version`, and `byte_length`. Use

@@ -1,0 +1,126 @@
+book enigma.records.conditions
+
+read everything from nil.std.core.option
+read hex_id_ok from enigma.durable_io
+read valid_key from enigma.records.bytes
+read record_index, record_sequence_limit, open_record_index, stage_record_put from enigma.records.index
+
+!!! Each key has one expected version. Version zero requires absence.
+public record_conditions begin record
+    field database_id as text
+    field keys as array of text
+    field versions as array of number
+end record
+
+public empty_record_conditions returns record_conditions begin paragraph
+    give build record_conditions with database_id being "", keys being [], versions being []
+end paragraph
+
+public record_condition_limit returns number begin paragraph
+    give 16
+end paragraph
+
+!!! The owner supplies its validated manifest and checks the caller's read
+!!! and write authority first. The grant budget counts condition keys.
+public check_record_conditions receives guards as record_conditions, database_id as text, index as record_index,
+    target_key as text, max_scan_keys as number returns text begin paragraph
+    value count is the length of guards.keys
+    when count is less than 1 or count is greater than (record_condition_limit with nothing) or
+        count does not equal (the length of guards.versions) or not (hex_id_ok with candidate being guards.database_id) then
+        give "invalid"
+    end when
+    value version_limit is record_sequence_limit with nothing
+    repeat for offset from 0 to count
+        value key is guards.keys at offset
+        value version is guards.versions at offset
+        when not (valid_key with key being key) or key equals target_key or version is less than 0 or version is greater than version_limit then
+            give "invalid"
+        end when
+        repeat for previous from 0 to offset
+            when (guards.keys at previous) equals key then give "invalid" end when
+        end repeat
+    end repeat
+    when count is greater than max_scan_keys then give "limit" end when
+    when guards.database_id does not equal database_id then give "foreign" end when
+
+    repeat for offset from 0 to count
+        value position is index.find with key being guards.keys at offset
+        variable observed as number is 0
+        when position is at least 0 then
+            value found is index.row with index being position
+            when found.is_none with nothing then give "corrupt" end when
+            value row is found.unwrap with nothing
+            when row.version is less than 1 or row.version is greater than index.sequence then give "corrupt" end when
+            set observed to row.version
+        end when
+        when observed does not equal (guards.versions at offset) then give "dependency_conflict" end when
+    end repeat
+    give "ok"
+end paragraph
+
+note suite "enigma.records.conditions"
+conditions_match_exact_versions_and_absence begin test
+    value database_id is "0123456789abcdef0123456789abcdef"
+    value initial is open_record_index with nothing
+    value digest is "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    value written is stage_record_put with index being initial, key being "test:Ω",
+        byte_length being 7, body_id being "00000000000000000000000000000001", digest being digest, expected_version being 0
+    expect written.code equals "ok"
+    value expected as array of number is [1, 0]
+    value guards is build record_conditions with database_id being database_id, keys being ["test:Ω", "Test:Ω"], versions being expected
+    expect (check_record_conditions with guards being guards, database_id being database_id,
+        index being written.index, target_key being "handoff", max_scan_keys being 2) equals "ok"
+    value added is stage_record_put with index being written.index, key being "Test:Ω",
+        byte_length being 0, body_id being "00000000000000000000000000000002", digest being digest, expected_version being 0
+    expect added.code equals "ok"
+    expect (check_record_conditions with guards being guards, database_id being database_id,
+        index being added.index, target_key being "handoff", max_scan_keys being 2) equals "dependency_conflict"
+    expect (check_record_conditions with guards being guards, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 2) equals "dependency_conflict"
+end test
+
+note suite "enigma.records.conditions"
+condition_checks_enforce_request_grant_and_database_bounds begin test
+    value database_id is "0123456789abcdef0123456789abcdef"
+    value initial is open_record_index with nothing
+    variable keys as array of text is []
+    variable versions as array of number is []
+    repeat for offset from 0 to 16
+        append formatted "input:{offset}" to keys
+        append 0 to versions
+    end repeat
+    value guards is build record_conditions with database_id being database_id, keys being keys, versions being versions
+    expect (check_record_conditions with guards being guards, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 16) equals "ok"
+    expect (check_record_conditions with guards being guards, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 15) equals "limit"
+    expect (check_record_conditions with guards being guards, database_id being "ffffffffffffffffffffffffffffffff",
+        index being initial, target_key being "handoff", max_scan_keys being 16) equals "foreign"
+
+    append "seventeenth" to keys
+    append 0 to versions
+    value oversized is build record_conditions with database_id being database_id, keys being keys, versions being versions
+    expect (check_record_conditions with guards being oversized, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 17) equals "invalid"
+end test
+
+note suite "enigma.records.conditions"
+conditions_reject_ambiguous_or_malformed_inputs begin test
+    value database_id is "0123456789abcdef0123456789abcdef"
+    value initial is open_record_index with nothing
+    value pair as array of number is [0, 0]
+    value single_version as array of number is [0]
+    value duplicate is build record_conditions with database_id being database_id, keys being ["input", "input"], versions being pair
+    expect (check_record_conditions with guards being duplicate, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 2) equals "invalid"
+    value target is build record_conditions with database_id being database_id, keys being ["handoff"], versions being single_version
+    expect (check_record_conditions with guards being target, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 1) equals "invalid"
+    value misaligned is build record_conditions with database_id being database_id, keys being ["input"], versions being []
+    expect (check_record_conditions with guards being misaligned, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 1) equals "invalid"
+    value too_high as array of number is [2147483647]
+    value invalid_version is build record_conditions with database_id being database_id, keys being ["input"], versions being too_high
+    expect (check_record_conditions with guards being invalid_version, database_id being database_id,
+        index being initial, target_key being "handoff", max_scan_keys being 1) equals "invalid"
+end test

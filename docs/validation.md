@@ -1,5 +1,28 @@
 # Development validation
 
+## Guarded record writes — 2026-11-26
+
+`./scripts/test-guarded.sh` passes six Matrix executions and two independent
+process scenarios on VM and native. The suite passes on both the Enigma
+development SDK from `dbb4379` and Goetic's combined Linux development SDK
+from `167ae3a` (manifest
+`5931094a3cf696f0c176d370864df4b15c4f22f108074f9ca682a3db15f8388a`).
+
+The guarded command commits after reopen with fresh authority and matching
+input versions. An unrelated write leaves those conditions matched. A changed
+input or a newly present key rejects the write with an empty conflict receipt.
+The filesystem oracle verifies that confirmed refusals leave both the record
+sequence and the body inventory intact. It also verifies normal authority
+clock commits and an uncertain manifest publication after matching conditions.
+The failed publication poisons the owner and leaves its unused staged body
+outside the canonical manifest.
+
+On the Enigma SDK, `./scripts/test-records.sh`, `./scripts/test-work.sh`, and
+`./scripts/test.sh` also pass. These runs exercise ordinary record puts,
+maximum-size record round trips, handoff resume, and the evidence suites.
+The combined SDK run exercises the guarded fixture. Goetic's existing
+application deployment uses its separately pinned engine source.
+
 ## Named resume view — 2026-11-26
 
 `./scripts/test-work.sh` passes on VM and native with the same development SDK

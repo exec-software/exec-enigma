@@ -1,0 +1,42 @@
+book enigma.work.commands
+
+read everything from nil.std.core.result
+read access_context from enigma.authority
+read bytes_of from enigma.durable_io
+read record_conditions, record_condition_limit from enigma.records.conditions
+read record_client from enigma.records.client
+read work_entry, encode_work_entry from enigma.work.model
+read work_save from enigma.work.client
+
+public work_command_info begin record
+    field name as text
+    field version as number
+    field operations as array of text
+    field max_body_bytes as number
+    field max_input_keys as number
+    field max_written_records as number
+end record
+
+public describe_save_current_handoff returns work_command_info begin paragraph
+    give build work_command_info with name being "save_current_handoff", version being 1, operations being ["put_checked"],
+        max_body_bytes being 32768, max_input_keys being (record_condition_limit with nothing), max_written_records being 1
+end paragraph
+
+public save_current_handoff receives client as record_client, caller as access_context, key as text, entry as work_entry,
+    expected_version as number returns work_save begin paragraph
+    when entry.kind does not equal "handoff" then
+        give build work_save with code being "invalid_entry", confirmed being yes, outcome_unknown being no, version being 0
+    end when
+    value encoded is encode_work_entry with entry being entry
+    when encoded.is_error with nothing then
+        give build work_save with code being (encoded.unwrap_error with nothing), confirmed being yes, outcome_unknown being no, version being 0
+    end when
+    value guards is build record_conditions with database_id being entry.inputs.database_id,
+        keys being entry.inputs.keys, versions being entry.inputs.versions
+    value stored is client.put_checked with caller being caller, key being key,
+        content being (bytes_of with content being (encoded.unwrap with nothing)), expected_version being expected_version, guards being guards
+    when not stored.confirmed then
+        give build work_save with code being stored.failure.code, confirmed being no, outcome_unknown being stored.failure.outcome_unknown, version being 0
+    end when
+    give build work_save with code being stored.receipt.code, confirmed being yes, outcome_unknown being no, version being stored.receipt.version
+end paragraph
