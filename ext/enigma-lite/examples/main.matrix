@@ -1,0 +1,75 @@
+book enigma.lite.example
+
+read arg_count, arg from nil.std.system
+read create_lite, open_lite from enigma.lite
+
+create_settings receives directory as text returns override integer begin paragraph
+    value opened is create_lite with directory being directory
+    expect opened.code equals "created"
+    value store is opened.store
+
+    value theme is store.put with key being "ui/theme", content being "night Ω雪", expected_version being 0
+    expect theme.confirmed
+    expect theme.code equals "ok"
+    expect theme.version equals 1
+
+    value empty is store.put with key being "ui/label", content being "", expected_version being 0
+    expect empty.confirmed
+    expect empty.code equals "ok"
+    expect empty.version equals 2
+
+    expect (store.close with nothing) equals "closed"
+    say "lite create ok"
+    give 0
+end paragraph
+
+reopen_settings receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect opened.code equals "ready"
+    value store is opened.store
+
+    value theme is store.get with key being "ui/theme"
+    expect theme.confirmed
+    expect theme.code equals "ok"
+    expect theme.found
+    expect theme.content equals "night Ω雪"
+    expect theme.version equals 1
+
+    value empty is store.get with key being "ui/label"
+    expect empty.confirmed
+    expect empty.code equals "ok"
+    expect empty.found
+    expect empty.content equals ""
+    expect empty.version equals 2
+
+    value missing is store.get with key being "ui/missing"
+    expect missing.confirmed
+    expect missing.code equals "ok"
+    expect not missing.found
+    expect missing.content equals ""
+    expect missing.version equals 0
+
+    value stale is store.put with key being "ui/theme", content being "stale", expected_version being 0
+    expect stale.confirmed
+    expect stale.code equals "conflict"
+    expect stale.version equals 0
+    expect not stale.outcome_unknown
+
+    value updated is store.put with key being "ui/theme", content being "dawn é", expected_version being theme.version
+    expect updated.confirmed
+    expect updated.code equals "ok"
+    expect updated.version equals 3
+
+    expect (store.close with nothing) equals "closed"
+    say "lite reopen ok"
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    when (arg_count with nothing) does not equal 2 then give 2 end when
+    value mode is arg with index being 0
+    value directory is arg with index being 1
+    when mode equals "create" then give create_settings with directory being directory end when
+    when mode equals "reopen" then give reopen_settings with directory being directory end when
+    give 2
+end paragraph

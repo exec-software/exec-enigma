@@ -1,5 +1,26 @@
 # Development validation
 
+## Enigma Lite — 2026-11-26
+
+`./scripts/test-lite.sh` builds the settings example and a separate
+validation probe. All seven process and filesystem methods pass on VM and
+native with the Enigma development SDK from `dbb4379` and Goetic's combined
+development SDK from `167ae3a`.
+
+The settings example preserves UTF-8 text across reopen and distinguishes
+an absent key from a stored empty value. The independent checks verify
+compare-and-set, all three Lite limits, refusal of foreign and oversized
+stores before recovery writes, and explicit access through the full record
+API. Repeated Lite reads in one session preserve the manifest bytes, inode,
+and modification time. Injected publication failure disables the owner
+and preserves the uncertain outcome. The text API rejects embedded NUL
+in a body written through the full record API.
+
+The evidence, full record, and work suites also pass on the Enigma SDK
+through `./scripts/test.sh`, `./scripts/test-records.sh`, and
+`./scripts/test-work.sh`. These results apply to the embedded Linux profile
+in [ENI-0012](design/ENI-0012-lite-records.md).
+
 ## Named resume view — 2026-11-26
 
 `./scripts/test-work.sh` passes on VM and native with the same development SDK

@@ -45,6 +45,10 @@ with explicit byte and key budgets. Goetic uses the typed Matrix package for
 durable workspace storage on a qualified Linux development SDK.
 [Record package](ext/enigma-records/README.md) · [Consumer validation](docs/validation.md#goetic-record-consumer--2026-11-21)
 
+For local settings and small state, Enigma Lite uses the same embedded
+record engine with a small text API and tighter storage limits.
+[Lite package](ext/enigma-lite/README.md)
+
 The work companion records handoffs and prior attempts. Agents and people can
 check whether the record versions behind an entry have changed before picking
 up the task. [Work package](ext/enigma-work/README.md)

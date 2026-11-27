@@ -15,6 +15,24 @@ read record_index_entry, record_key_batch, open_record_key_batch, stage_record_p
     record_list_bytes_limit, record_sequence_limit from enigma.records.index
 read record_access_limits, record_grant_receipt from enigma.records.authority
 
+!!! Per-owner limits describe admission and do not change the store format.
+public record_bounds begin record
+    field max_keys as number
+    field max_body_bytes as number
+    field max_live_bytes as number
+end record
+
+full_record_bounds returns record_bounds begin paragraph
+    give build record_bounds with max_keys being (record_key_limit with nothing),
+        max_body_bytes being (record_body_limit with nothing), max_live_bytes being (record_live_bytes_limit with nothing)
+end paragraph
+
+valid_record_bounds receives bounds as record_bounds returns boolean begin paragraph
+    give bounds.max_keys is greater than 0 and bounds.max_keys is at most (record_key_limit with nothing) and
+        bounds.max_body_bytes is greater than 0 and bounds.max_body_bytes is at most (record_body_limit with nothing) and
+        bounds.max_live_bytes is greater than 0 and bounds.max_live_bytes is at most (record_live_bytes_limit with nothing)
+end paragraph
+
 public record_limits begin record
     field max_keys as number
     field max_key_bytes as number
@@ -199,6 +217,7 @@ end paragraph
 
 !!! One owner per execution context. Its public fields are trusted host memory.
 public record_owner begin class
+    field bounds as record_bounds
     field directory as text
     field database_id as text
     field scope as text
@@ -233,8 +252,8 @@ public record_owner begin class
     end paragraph
 
     public describe_limits returns record_limits begin paragraph
-        give build record_limits with max_keys being (record_key_limit with nothing), max_key_bytes being 256,
-            max_body_bytes being (record_body_limit with nothing), max_live_bytes being (record_live_bytes_limit with nothing),
+        give build record_limits with max_keys being my.bounds.max_keys, max_key_bytes being 256,
+            max_body_bytes being my.bounds.max_body_bytes, max_live_bytes being my.bounds.max_live_bytes,
             max_index_bytes being (record_index_bytes_limit with nothing), max_grants being 256, max_grant_bytes being 65536,
             max_manifest_bytes being 524288, max_envelope_bytes being 1048576, max_list_metadata_bytes being (record_list_bytes_limit with nothing)
     end paragraph
@@ -376,7 +395,7 @@ public record_owner begin class
         when not (valid_key with key being key) or max_body_bytes is less than 0 or max_body_bytes is greater than (record_body_limit with nothing) then
             give empty_get with effect being (my finish with state being state, code being "invalid")
         end when
-        when max_body_bytes is greater than access.limits.max_read_bytes then
+        when max_body_bytes is greater than my.bounds.max_body_bytes or max_body_bytes is greater than access.limits.max_read_bytes then
             give empty_get with effect being (my finish with state being state, code being "limit")
         end when
         value position is state.index.find with key being key
@@ -411,7 +430,7 @@ public record_owner begin class
         when not (valid_key with key being key) or expected_version is less than 0 or expected_version is greater than (record_sequence_limit with nothing) then
             give put_reply with effect being (my finish with state being state, code being "invalid"), version being 0, byte_length being 0
         end when
-        when byte_length is greater than (record_body_limit with nothing) then
+        when byte_length is greater than my.bounds.max_body_bytes then
             give put_reply with effect being (my finish with state being state, code being "capacity"), version being 0, byte_length being 0
         end when
         when byte_length is greater than access.limits.max_write_bytes then
@@ -433,6 +452,9 @@ public record_owner begin class
         end when
         when planned.code does not equal "ok" then
             give put_reply with effect being (my finish with state being state, code being planned.code), version being 0, byte_length being 0
+        end when
+        when (planned.index.count with nothing) is greater than my.bounds.max_keys or planned.index.live_bytes is greater than my.bounds.max_live_bytes then
+            give put_reply with effect being (my finish with state being state, code being "capacity"), version being 0, byte_length being 0
         end when
         value previous_index is state.index
         set state.index to planned.index
@@ -479,7 +501,8 @@ public record_owner begin class
             max_metadata_bytes is less than 0 or max_metadata_bytes is greater than (record_list_bytes_limit with nothing) then
             give list_reply with effect being (my finish with state being state, code being "invalid"), entries being empty, generation being 0
         end when
-        when max_keys is greater than access.limits.max_list_keys or max_scan_keys is greater than access.limits.max_scan_keys or
+        when max_keys is greater than my.bounds.max_keys or max_scan_keys is greater than my.bounds.max_keys or
+            max_keys is greater than access.limits.max_list_keys or max_scan_keys is greater than access.limits.max_scan_keys or
             max_metadata_bytes is greater than access.limits.max_list_metadata_bytes then
             give list_reply with effect being (my finish with state being state, code being "limit"), entries being empty, generation being 0
         end when
@@ -495,9 +518,10 @@ public record_open_result begin record
     field owner as record_owner
 end record
 
-blank_owner receives directory as text returns record_owner begin paragraph
-    give build record_owner with directory being directory, database_id being "", scope being "", incarnation being "", generation being 0,
-        clock_floor being 0, payload being "", lock_token being 0, active being no, poisoned being no, outcome_unknown being no
+blank_owner receives directory as text, bounds as record_bounds returns record_owner begin paragraph
+    give build record_owner with bounds being bounds, directory being directory, database_id being "", scope being "",
+        incarnation being "", generation being 0, clock_floor being 0, payload being "", lock_token being 0,
+        active being no, poisoned being no, outcome_unknown being no
 end paragraph
 
 failed_open receives owner as record_owner, code as text, uncertain as boolean returns record_open_result begin paragraph
@@ -520,9 +544,13 @@ activate receives owner as record_owner, state as record_manifest, payload as te
 end paragraph
 
 public create_record_database receives directory as text, scope as text returns record_open_result begin paragraph
+    give create_bounded_record_database with directory being directory, scope being scope, bounds being (full_record_bounds with nothing)
+end paragraph
+
+public create_bounded_record_database receives directory as text, scope as text, bounds as record_bounds returns record_open_result begin paragraph
     value selected is pin_directory with path being directory
-    value owner is blank_owner with directory being selected
-    when selected equals "" or not (valid_record_scope with scope being scope) then
+    value owner is blank_owner with directory being selected, bounds being bounds
+    when selected equals "" or not (valid_record_scope with scope being scope) or not (valid_record_bounds with bounds being bounds) then
         give failed_open with owner being owner, code being "invalid", uncertain being no
     end when
     value created is create_private_directory with path being selected
@@ -563,9 +591,21 @@ public create_record_database receives directory as text, scope as text returns 
 end paragraph
 
 public open_record_database receives directory as text, max_verify_bytes as number returns record_open_result begin paragraph
+    give open_existing_records with directory being directory, expected_scope being "", scoped being no,
+        max_verify_bytes being max_verify_bytes, bounds being (full_record_bounds with nothing)
+end paragraph
+
+public open_bounded_record_database receives directory as text, scope as text, bounds as record_bounds returns record_open_result begin paragraph
+    give open_existing_records with directory being directory, expected_scope being scope, scoped being yes,
+        max_verify_bytes being bounds.max_live_bytes, bounds being bounds
+end paragraph
+
+open_existing_records receives directory as text, expected_scope as text, scoped as boolean,
+    max_verify_bytes as number, bounds as record_bounds returns record_open_result begin paragraph
     value selected is pin_directory with path being directory
-    value owner is blank_owner with directory being selected
-    when selected equals "" or max_verify_bytes is less than 0 or max_verify_bytes is greater than (record_live_bytes_limit with nothing) then
+    value owner is blank_owner with directory being selected, bounds being bounds
+    when selected equals "" or max_verify_bytes is less than 0 or max_verify_bytes is greater than (record_live_bytes_limit with nothing) or
+        not (valid_record_bounds with bounds being bounds) or (scoped and not (valid_record_scope with scope being expected_scope)) then
         give failed_open with owner being owner, code being "invalid", uncertain being no
     end when
     value private is is_private_directory with path being selected
@@ -580,7 +620,21 @@ public open_record_database receives directory as text, max_verify_bytes as numb
     value decoded is decode_record_manifest with payload being loaded.payload
     when decoded.code does not equal "ok" then give failed_open with owner being owner, code being decoded.code, uncertain being no end when
     value state is decoded.state
-    when state.index.live_bytes is greater than max_verify_bytes then give failed_open with owner being owner, code being "limit", uncertain being no end when
+    !!! Reject foreign and oversized stores under their lock, before body
+    !!! reads or recovery can publish a new incarnation or retire grants.
+    when scoped and state.scope does not equal expected_scope then
+        give failed_open with owner being owner, code being "scope_mismatch", uncertain being no
+    end when
+    when state.index.live_bytes is greater than max_verify_bytes or (state.index.count with nothing) is greater than bounds.max_keys then
+        give failed_open with owner being owner, code being "limit", uncertain being no
+    end when
+    when scoped then
+        repeat for each amount in state.index.byte_lengths
+            when amount is greater than bounds.max_body_bytes then
+                give failed_open with owner being owner, code being "limit", uncertain being no
+            end when
+        end repeat
+    end when
     when state.generation is at least 2147483646 then give failed_open with owner being owner, code being "exhausted", uncertain being no end when
     value objects_private is is_private_directory with path being (objects_path with directory being selected)
     when objects_private.is_error with nothing or not (objects_private.unwrap with nothing) then

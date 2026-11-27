@@ -1,0 +1,162 @@
+book enigma.lite
+
+read access_context from enigma.authority
+read bytes_of, text_of from enigma.durable_io
+read record_access_limits from enigma.records.authority
+read record_bounds, record_open_result, create_bounded_record_database, open_bounded_record_database from enigma.records.session
+read record_client, connect_records, provision_record_host from enigma.records.client
+
+lite_scope returns text begin paragraph
+    give "enigma.lite.v1"
+end paragraph
+
+lite_entity returns text begin paragraph
+    give "enigma.lite.host"
+end paragraph
+
+public describe_lite returns record_bounds begin paragraph
+    give build record_bounds with max_keys being 16, max_body_bytes being 65536, max_live_bytes being 262144
+end paragraph
+
+public lite_get_reply begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field found as boolean
+    field content as text
+    field version as number
+end record
+
+public lite_put_reply begin record
+    field code as text
+    field confirmed as boolean
+    field outcome_unknown as boolean
+    field version as number
+end record
+
+empty_get receives code as text, confirmed as boolean, uncertain as boolean returns lite_get_reply begin paragraph
+    give build lite_get_reply with code being code, confirmed being confirmed, outcome_unknown being uncertain,
+        found being no, content being "", version being 0
+end paragraph
+
+empty_put receives code as text, confirmed as boolean, uncertain as boolean returns lite_put_reply begin paragraph
+    give build lite_put_reply with code being code, confirmed being confirmed, outcome_unknown being uncertain, version being 0
+end paragraph
+
+contains_nul receives content as array of override byte returns boolean begin paragraph
+    repeat for each octet in content
+        when (octet becomes number) equals 0 then give yes end when
+    end repeat
+    give no
+end paragraph
+
+!!! A Lite owner acts for one trusted local application session. The
+!!! admission tick stays fixed until close so normal reads need no clock commit.
+public lite_store begin class
+    field client as record_client
+    field session_tick as number
+
+    caller_context returns access_context begin paragraph
+        give build access_context with entity being (lite_entity with nothing), session being my.session_tick,
+            audience being "enigma", tick being my.session_tick
+    end paragraph
+
+    public get receives key as text returns lite_get_reply begin paragraph
+        value bounds is describe_lite with nothing
+        value fetched is my.client.get with caller being (my caller_context with nothing), key being key, max_body_bytes being bounds.max_body_bytes
+        when not fetched.confirmed then
+            give empty_get with code being fetched.failure.code, confirmed being no, uncertain being fetched.failure.outcome_unknown
+        end when
+        when fetched.receipt.code does not equal "ok" or not fetched.receipt.found then
+            give empty_get with code being fetched.receipt.code, confirmed being yes, uncertain being no
+        end when
+        !!! Full record clients can store a NUL in UTF-8. The Lite text
+        !!! surface refuses it before native text conversion.
+        when (contains_nul with content being fetched.receipt.content) then
+            give empty_get with code being "invalid_text", confirmed being yes, uncertain being no
+        end when
+        give build lite_get_reply with code being "ok", confirmed being yes, outcome_unknown being no, found being yes,
+            content being (text_of with octets being fetched.receipt.content), version being fetched.receipt.version
+    end paragraph
+
+    public put receives key as text, content as text, expected_version as number returns lite_put_reply begin paragraph
+        !!! Preserve an existing lifecycle failure before validating content.
+        value state is my.client.owner.describe_state with nothing
+        when state.code does not equal "ok" then
+            give empty_put with code being state.code, confirmed being no, uncertain being my.client.owner.outcome_unknown
+        end when
+        value bounds is describe_lite with nothing
+        when (the length of content) is greater than bounds.max_body_bytes then
+            give empty_put with code being "capacity", confirmed being yes, uncertain being no
+        end when
+        value octets is bytes_of with content being content
+        when (contains_nul with content being octets) then
+            give empty_put with code being "invalid_text", confirmed being yes, uncertain being no
+        end when
+        value saved is my.client.put with caller being (my caller_context with nothing), key being key, content being octets,
+            expected_version being expected_version
+        when not saved.confirmed then
+            give empty_put with code being saved.failure.code, confirmed being no, uncertain being saved.failure.outcome_unknown
+        end when
+        give build lite_put_reply with code being saved.receipt.code, confirmed being yes, outcome_unknown being no, version being saved.receipt.version
+    end paragraph
+
+    public close returns text begin paragraph
+        give my.client.owner.close with nothing
+    end paragraph
+end class
+
+public lite_open_result begin record
+    field code as text
+    field outcome_unknown as boolean
+    field store as lite_store
+end record
+
+failed_lite receives opened as record_open_result, code as text, uncertain as boolean returns lite_open_result begin paragraph
+    value closed is opened.owner.close with nothing
+    value empty is build lite_store with client being (connect_records with owner being opened.owner, grant_id being 0), session_tick being 0
+    when closed does not equal "closed" then
+        give build lite_open_result with code being "lock_error", outcome_unknown being uncertain, store being empty
+    end when
+    give build lite_open_result with code being code, outcome_unknown being uncertain, store being empty
+end paragraph
+
+connect_lite receives opened as record_open_result returns lite_open_result begin paragraph
+    when opened.code does not equal "created" and opened.code does not equal "ready" then
+        give failed_lite with opened being opened, code being opened.code, uncertain being opened.outcome_unknown
+    end when
+    value state is opened.owner.describe_state with nothing
+    when state.code does not equal "ok" then
+        give failed_lite with opened being opened, code being state.code, uncertain being opened.owner.outcome_unknown
+    end when
+    when state.clock_floor is at least 2147483645 then
+        give failed_lite with opened being opened, code being "exhausted", uncertain being no
+    end when
+    value tick is state.clock_floor plus 1
+    value bounds is describe_lite with nothing
+    value limits is build record_access_limits with max_read_bytes being bounds.max_body_bytes, max_write_bytes being bounds.max_body_bytes,
+        max_scan_keys being 0, max_list_keys being 0, max_list_metadata_bytes being 0
+    value grant is provision_record_host with owner being opened.owner, entity being (lite_entity with nothing), session_id being tick,
+        actions being 3, expires being (tick plus 1), limits being limits, tick being tick
+    when not grant.confirmed then
+        give failed_lite with opened being opened, code being grant.failure.code, uncertain being grant.failure.outcome_unknown
+    end when
+    when grant.receipt.code does not equal "ok" then
+        give failed_lite with opened being opened, code being grant.receipt.code, uncertain being no
+    end when
+    value store is build lite_store with client being (connect_records with owner being opened.owner, grant_id being grant.receipt.grant_id),
+        session_tick being tick
+    give build lite_open_result with code being opened.code, outcome_unknown being no, store being store
+end paragraph
+
+public create_lite receives directory as text returns lite_open_result begin paragraph
+    value opened is create_bounded_record_database with directory being directory, scope being (lite_scope with nothing),
+        bounds being (describe_lite with nothing)
+    give connect_lite with opened being opened
+end paragraph
+
+public open_lite receives directory as text returns lite_open_result begin paragraph
+    value opened is open_bounded_record_database with directory being directory, scope being (lite_scope with nothing),
+        bounds being (describe_lite with nothing)
+    give connect_lite with opened being opened
+end paragraph

@@ -58,6 +58,11 @@ compare-and-set versions, complete key enumeration, and separate byte authority.
 Goetic uses the profile on its pinned combined development SDK.
 [ENI-0009](ENI-0009-application-records.md) · [Consumer validation](../validation.md#goetic-record-consumer--2026-11-21)
 
+## Lite record stores
+
+Lite exposes an embedded settings API with smaller key and byte limits
+over the durable record format. [ENI-0012](ENI-0012-lite-records.md)
+
 ## Work handoffs
 
 The Matrix companion records handoffs and earlier attempts as ordinary

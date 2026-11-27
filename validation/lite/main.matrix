@@ -1,0 +1,191 @@
+book enigma.validation.lite
+
+read arg_count, arg from nil.std.system
+read flush, read_line from nil.std.io
+read create_lite, open_lite, lite_put_reply from enigma.lite
+read create_record_database, open_record_database from enigma.records.session
+
+expect_capacity receives reply as lite_put_reply returns nothing begin paragraph
+    expect reply.confirmed
+    expect reply.code equals "capacity"
+    expect reply.version equals 0
+    expect not reply.outcome_unknown
+    give nothing
+end paragraph
+
+key_capacity receives directory as text returns override integer begin paragraph
+    value opened is create_lite with directory being directory
+    expect opened.code equals "created"
+    value store is opened.store
+
+    repeat for position from 0 to 16
+        value key is formatted "slot:{position}"
+        value written is store.put with key being key, content being "", expected_version being 0
+        expect written.confirmed
+        expect written.code equals "ok"
+        expect written.version equals position plus 1
+    end repeat
+
+    value refused is store.put with key being "one-more", content being "", expected_version being 0
+    evaluate expect_capacity with reply being refused
+
+    value replaced is store.put with key being "slot:0", content being "kept", expected_version being 1
+    expect replaced.confirmed
+    expect replaced.code equals "ok"
+    expect replaced.version equals 17
+
+    expect (store.close with nothing) equals "closed"
+    say "lite key limit ok"
+    give 0
+end paragraph
+
+body_capacity receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect opened.code equals "ready"
+    value store is opened.store
+
+    variable exact as text is "u"
+    repeat for round from 0 to 16
+        set exact to exact plus exact
+    end repeat
+    expect (the length of exact) equals 65536
+
+    value oversized is store.put with key being "block:0", content being (exact plus "u"), expected_version being 1
+    evaluate expect_capacity with reply being oversized
+
+    value aggregate is store.put with key being "one-more", content being "u", expected_version being 0
+    evaluate expect_capacity with reply being aggregate
+
+    value replaced is store.put with key being "block:0", content being exact, expected_version being 1
+    expect replaced.confirmed
+    expect replaced.code equals "ok"
+    expect replaced.version equals 5
+
+    expect (store.close with nothing) equals "closed"
+    say "lite body limits ok"
+    give 0
+end paragraph
+
+inspect_lite receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect not opened.outcome_unknown
+    when opened.code equals "ready" then
+        expect (opened.store.close with nothing) equals "closed"
+    end when
+    say opened.code
+    give 0
+end paragraph
+
+announce receives message as text returns nothing begin paragraph
+    say message
+    evaluate flush with nothing
+    give nothing
+end paragraph
+
+repeat_reads receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect opened.code equals "ready"
+    value store is opened.store
+    evaluate announce with message being "lite read ready"
+    expect (read_line with nothing) equals "read"
+
+    repeat for position from 0 to 3
+        value theme is store.get with key being "ui/theme"
+        expect theme.confirmed
+        expect theme.code equals "ok"
+        expect theme.found
+        expect theme.content equals "night Ω雪"
+        expect theme.version equals 1
+    end repeat
+    evaluate announce with message being "lite reads complete"
+    expect (read_line with nothing) equals "close"
+    expect (store.close with nothing) equals "closed"
+    give 0
+end paragraph
+
+refuse_nul receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect opened.code equals "ready"
+    value store is opened.store
+    value invalid is store.get with key being "setting"
+    expect invalid.confirmed
+    expect invalid.code equals "invalid_text"
+    expect not invalid.found
+    expect invalid.content equals ""
+    expect invalid.version equals 0
+    expect not invalid.outcome_unknown
+
+    value good is store.get with key being "ui/theme"
+    expect good.confirmed
+    expect good.code equals "ok"
+    expect good.found
+    expect good.content equals "plain"
+    expect (store.close with nothing) equals "closed"
+    say "lite refused nontext"
+    give 0
+end paragraph
+
+publication_failure receives directory as text returns override integer begin paragraph
+    value opened is open_lite with directory being directory
+    expect opened.code equals "ready"
+    value store is opened.store
+    evaluate announce with message being "lite write ready"
+    expect (read_line with nothing) equals "write"
+
+    value failed is store.put with key being "ui/theme", content being "unpublished", expected_version being 1
+    expect not failed.confirmed
+    expect failed.code equals "storage_error"
+    expect failed.outcome_unknown
+    expect failed.version equals 0
+    evaluate announce with message being "lite publication uncertain"
+    expect (read_line with nothing) equals "again"
+
+    value read_again is store.get with key being "ui/theme"
+    expect not read_again.confirmed
+    expect read_again.code equals "poisoned"
+    expect read_again.outcome_unknown
+    expect not read_again.found
+    expect read_again.content equals ""
+    value write_again is store.put with key being "ui/theme", content being "ignored", expected_version being 1
+    expect not write_again.confirmed
+    expect write_again.code equals "poisoned"
+    expect write_again.outcome_unknown
+    expect write_again.version equals 0
+    expect (store.close with nothing) equals "closed"
+    evaluate announce with message being "lite owner closed"
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    when (arg_count with nothing) does not equal 2 then give 2 end when
+    value mode is arg with index being 0
+    value directory is arg with index being 1
+    when mode equals "key-limit" then give key_capacity with directory being directory end when
+    when mode equals "body-limits" then give body_capacity with directory being directory end when
+    when mode equals "open-code" then give inspect_lite with directory being directory end when
+    when mode equals "reads" then give repeat_reads with directory being directory end when
+    when mode equals "nul" then give refuse_nul with directory being directory end when
+    when mode equals "fault" then give publication_failure with directory being directory end when
+    when mode equals "empty" then
+        value created is create_lite with directory being directory
+        expect created.code equals "created"
+        expect (created.store.close with nothing) equals "closed"
+        say "created"
+        give 0
+    end when
+    when mode equals "foreign" then
+        value created is create_record_database with directory being directory, scope being "foreign"
+        expect created.code equals "created"
+        expect (created.owner.close with nothing) equals "closed"
+        say "created"
+        give 0
+    end when
+    when mode equals "open-full" then
+        value opened is open_record_database with directory being directory, max_verify_bytes being 1048576
+        expect opened.code equals "ready"
+        expect (opened.owner.close with nothing) equals "closed"
+        say "ready"
+        give 0
+    end when
+    give 2
+end paragraph
