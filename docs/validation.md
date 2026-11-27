@@ -1,5 +1,26 @@
 # Development validation
 
+## Work handoffs and attempt history — 2026-11-26
+
+The companion source is
+[`5e00298`](https://github.com/exec-software/exec-enigma/commit/5e002987188c8fcd09b269b9657a3aa9bbb4d035).
+Validation used the Linux x86_64 development SDK from NIL source `dbb4379`,
+generation `936298a9c20142f2634744a0154ee32d7e5807cc1f3f743d08059fab61f0b7bf`.
+
+`./scripts/test-work.sh` passes six Matrix codec executions and a separate
+process persistence scenario on both VM and native. The scenario stores a
+handoff and a failed build attempt, reopens the record store, and verifies
+fresh authority. An unrelated write leaves the input versions unchanged.
+Replacing the SDK record and creating a previously absent test report flags
+both entries for review. The filesystem oracle verifies the saved entry
+bytes and versions independently. Budget, denied, and foreign comparisons
+reveal no observed metadata. A duplicate create-only write is refused.
+
+`./scripts/test.sh` also passes 176 Matrix executions, 24 CLI checks, both
+volatile examples, and 40 Python methods. The work probe runs under its
+separate runner. Goetic's pinned record source trees match this revision.
+See the [handoff contract](design/ENI-0010-work-handoffs.md).
+
 ## Goetic record consumer — 2026-11-21
 
 Goetic's workspace migration uses Enigma source
