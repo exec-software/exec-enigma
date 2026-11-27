@@ -11,7 +11,8 @@ Enigma is a new database-engine seed written in Matrix. Read `README.md`,
 `docs/design/ENI-0007-application-sessions.md`,
 `docs/design/ENI-0008-bounded-capacity.md`,
 `docs/design/ENI-0009-application-records.md`,
-`docs/design/ENI-0010-work-handoffs.md`, and `SECURITY.md` before
+`docs/design/ENI-0010-work-handoffs.md`,
+`docs/design/ENI-0011-guarded-record-writes.md`, and `SECURITY.md` before
 extending the engine.
 
 - Implement engine behavior in Matrix under `src/enigma/` with `.matrix` files.
@@ -67,3 +68,7 @@ extending the engine.
   `ext/enigma-work`. Run `./scripts/test-work.sh` for changes to that package.
   A version comparison requires a complete authorized inventory and never
   conveys authority for a later write.
+
+- Guarded puts check read and write authority before inspecting condition keys.
+  Verify conditions and stage the destination from the same manifest under
+  its writer lock. Run `./scripts/test-guarded.sh` for this commit path.

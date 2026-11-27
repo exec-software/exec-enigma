@@ -2,6 +2,7 @@ book enigma.records.client
 
 read access_context from enigma.authority
 read record_access_limits, record_grant_receipt from enigma.records.authority
+read record_conditions from enigma.records.conditions
 read record_owner, record_reply, record_get_receipt, record_put_receipt, record_list_receipt from enigma.records.session
 
 public record_client begin class
@@ -18,6 +19,12 @@ public record_client begin class
         expected_version as number returns enigma.records.session::record_reply of enigma.records.session::record_put_receipt begin paragraph
         give my.owner.put with instance being my.instance, caller being caller, grant_id being my.grant_id,
             key being key, content being content, expected_version being expected_version
+    end paragraph
+
+    public put_checked receives caller as access_context, key as text, content as array of override byte,
+        expected_version as number, guards as record_conditions returns enigma.records.session::record_reply of enigma.records.session::record_put_receipt begin paragraph
+        give my.owner.put_checked with instance being my.instance, caller being caller, grant_id being my.grant_id,
+            key being key, content being content, expected_version being expected_version, guards being guards
     end paragraph
 
     public list_keys receives caller as access_context, max_keys as number, max_metadata_bytes as number,

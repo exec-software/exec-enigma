@@ -30,6 +30,27 @@ A confirmed `ok` report includes the handoff, its storage version, and
 clears the entry, version, and comparison data. The view uses both read
 and list authority. Its reads can commit a security clock advance.
 
+Import `save_current_handoff` and `describe_save_current_handoff` from
+`enigma.work.commands` for a guarded write. The descriptor exposes version 1,
+the `put_checked` operation, the 32 KiB body ceiling, up to 16 input conditions,
+and one possible record write.
+
+```matrix
+value saved is save_current_handoff with client being client, caller being caller,
+    key being "work/42/handoff", entry being revised_handoff,
+    expected_version being report.version
+```
+
+Supply a handoff with the versions it actually relied on. The command checks
+the current input versions and saves the handoff in a single owner operation.
+Use version zero for a create-only destination or an input observed absent.
+A confirmed `dependency_conflict` means an input no longer matches. A confirmed
+`conflict` means the handoff's own storage version no longer matches. Both
+refusals preserve the existing handoff. The caller needs current read and
+write authority and a grant whose scan budget covers the named inputs. This
+command uses exact input keys without a listing. Inspect an uncertain outcome
+before trying the write again.
+
 A handoff can hold a short summary and the next step. An attempt also needs
 an outcome, such as “blocked on a missing linker.” Capture the SDK configuration
 record as an input. If the SDK record changes, a later check flags the attempt
@@ -42,9 +63,9 @@ the entry's encoded size. Check `confirmed` and then `code` before using a
 reply. A budget refusal provides no comparison. An unconfirmed write with an
 unknown outcome requires inspection before another attempt to save.
 
-The package compares versions of named records in one database. It cannot
-determine whether their contents are correct or whether a later write still
-has current inputs. See the [handoff contract](../../docs/design/ENI-0010-work-handoffs.md).
+The package compares versions of named records in one database. Freshness from
+a view describes its observed generation. Use the guarded command to check the
+same preconditions at the write. See the [handoff contract](../../docs/design/ENI-0010-work-handoffs.md).
 
 The [create and resume example](../../validation/work/main.matrix) shows
 the full sequence with a synthetic task. Run it through the test runner

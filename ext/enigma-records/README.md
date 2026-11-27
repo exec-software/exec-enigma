@@ -42,6 +42,9 @@ fresh trusted `access_context` on every client call.
 - `put(caller, key, content, expected_version)` uses version zero for
   create-only and the last observed version for replacement. Save the
   returned version on success.
+- `put_checked(caller, key, content, expected_version, guards)` also checks up
+  to 16 input versions in the same commit. It uses the caller's read and write
+  rights and scan budget. [Guarded write contract](../../docs/design/ENI-0011-guarded-record-writes.md)
 - `list_keys(caller, max_keys, max_metadata_bytes, max_scan_keys)` returns the
   full ordered batch with versions and lengths or an empty `limit` receipt.
 - `delegate` and `revoke` apply the current grant's authority. Provisioning

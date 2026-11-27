@@ -85,8 +85,9 @@ another database has the same numeric versions.
 The package uses ordinary compare-and-set on the entry itself. It preserves
 confirmed conflicts and unconfirmed storage replies and leaves the decision
 to retry with the caller. The first slice observes application record versions
-within one database. Evidence queries and guarded writes across the inputs
-remain separate capabilities. Entry summaries are application data in the
+within one database. The named command `save_current_handoff` applies these
+record versions as commit conditions. Evidence queries remain a separate
+capability. [Guarded write contract](ENI-0011-guarded-record-writes.md) Entry summaries are application data in the
 scope where they are saved, so the application is responsible for choosing
 what to copy into a note.
 

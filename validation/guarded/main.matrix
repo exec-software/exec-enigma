@@ -1,0 +1,238 @@
+book enigma.validation.guarded
+
+read flush, read_line from nil.std.io
+read arg, arg_count from nil.std.system
+read access_context from enigma.authority
+read bytes_of from enigma.durable_io
+read record_access_limits from enigma.records.authority
+read record_conditions from enigma.records.conditions
+read create_record_database, open_record_database, record_owner, record_reply, record_put_receipt from enigma.records.session
+read connect_records, provision_record_host, record_client from enigma.records.client
+read work_entry, work_inputs from enigma.work.model
+read load_work_entry from enigma.work.client
+read save_current_handoff, describe_save_current_handoff from enigma.work.commands
+
+fresh_context receives session_id as number, tick as number returns access_context begin paragraph
+    give build access_context with entity being "test:guarded", session being session_id, audience being "enigma", tick being tick
+end paragraph
+
+admit receives owner as record_owner, session_id as number, tick as number,
+    actions as number, scan_limit as number returns record_client begin paragraph
+    value limits is build record_access_limits with max_read_bytes being 32768, max_write_bytes being 32768,
+        max_scan_keys being scan_limit, max_list_keys being 0, max_list_metadata_bytes being 0
+    value issued is provision_record_host with owner being owner, entity being "test:guarded", session_id being session_id,
+        actions being actions, expires being 100, limits being limits, tick being tick
+    expect issued.confirmed
+    expect issued.receipt.code equals "ok"
+    give connect_records with owner being owner, grant_id being issued.receipt.grant_id
+end paragraph
+
+save_text receives client as record_client, caller as access_context, key as text,
+    content as text, version as number returns number begin paragraph
+    value stored is client.put with caller being caller, key being key,
+        content being (bytes_of with content being content), expected_version being version
+    expect stored.confirmed
+    expect stored.receipt.code equals "ok"
+    give stored.receipt.version
+end paragraph
+
+check_put receives client as record_client, caller as access_context, key as text, content as text,
+    version as number, guards as record_conditions returns enigma.records.session::record_reply of enigma.records.session::record_put_receipt begin paragraph
+    give client.put_checked with caller being caller, key being key,
+        content being (bytes_of with content being content), expected_version being version, guards being guards
+end paragraph
+
+expect_refusal receives reply as enigma.records.session::record_reply of enigma.records.session::record_put_receipt,
+    code as text returns nothing begin paragraph
+    expect reply.confirmed
+    expect reply.receipt.code equals code
+    expect reply.receipt.version equals 0
+    expect reply.receipt.byte_length equals 0
+    expect not reply.failure.outcome_unknown
+    give nothing
+end paragraph
+
+conditions_from receives inputs as work_inputs returns record_conditions begin paragraph
+    give build record_conditions with database_id being inputs.database_id, keys being inputs.keys, versions being inputs.versions
+end paragraph
+
+seed_store receives directory as text returns override integer begin paragraph
+    value described is describe_save_current_handoff with nothing
+    expect described.name equals "save_current_handoff"
+    expect described.version equals 1
+    expect (described.operations at 0) equals "put_checked"
+    expect described.max_input_keys equals 16
+    expect described.max_written_records equals 1
+
+    value opened is create_record_database with directory being directory, scope being "guarded-probe"
+    expect opened.code equals "created"
+    value owner is opened.owner
+    value client is admit with owner being owner, session_id being 1, tick being 1, actions being 3, scan_limit being 16
+    value caller is fresh_context with session_id being 1, tick being 2
+    value listing is client.list_keys with caller being caller, max_keys being 0, max_metadata_bytes being 0, max_scan_keys being 0
+    expect listing.confirmed
+    expect listing.receipt.code equals "denied"
+    expect (save_text with client being client, caller being caller, key being "sdk/current", content being "SDK A", version being 0) equals 1
+
+    value sdk is client.get with caller being caller, key being "sdk/current", max_body_bytes being 32
+    value tests is client.get with caller being caller, key being "test/result", max_body_bytes being 32
+    expect sdk.confirmed and tests.confirmed
+    expect sdk.receipt.found
+    expect not tests.receipt.found
+    expect tests.receipt.code equals "ok"
+    value state is owner.describe_state with nothing
+    value versions as array of number is [sdk.receipt.version, tests.receipt.version]
+    value inputs is build work_inputs with database_id being state.database_id, generation being state.generation,
+        keys being ["sdk/current", "test/result"], versions being versions
+    value guards is conditions_from with inputs being inputs
+    value decision is check_put with client being client, caller being caller, key being "release/decision",
+        content being "Native check pending.", version being 0, guards being guards
+    expect decision.confirmed
+    expect decision.receipt.code equals "ok"
+    expect decision.receipt.version equals 2
+    expect decision.receipt.byte_length equals 21
+
+    value entry is build work_entry with kind being "handoff", task being "issue:42",
+        summary being "Handoff under SDK A.", outcome being "", next_step being "Run the native check.", inputs being inputs
+    value saved is save_current_handoff with client being client, caller being caller, key being "work/42/handoff",
+        entry being entry, expected_version being 0
+    expect saved.confirmed
+    expect saved.code equals "ok"
+    expect saved.version equals 3
+
+    expect (owner.close with nothing) equals "closed"
+    say "guarded writes committed"
+    give 0
+end paragraph
+
+resume_store receives directory as text returns override integer begin paragraph
+    value opened is open_record_database with directory being directory, max_verify_bytes being 65536
+    expect opened.code equals "ready"
+    value owner is opened.owner
+    value retired is connect_records with owner being owner, grant_id being 1
+    value client is admit with owner being owner, session_id being 2, tick being 3, actions being 3, scan_limit being 16
+    value caller is fresh_context with session_id being 2, tick being 4
+    value saved is load_work_entry with client being client, caller being caller, key being "work/42/handoff"
+    expect saved.confirmed
+    expect saved.code equals "ok"
+    expect saved.version equals 3
+    value guards is conditions_from with inputs being saved.entry.inputs
+    expect (guards.versions at 0) equals 1
+    expect (guards.versions at 1) equals 0
+
+    value old_caller is fresh_context with session_id being 1, tick being 4
+    value retired_put is check_put with client being retired, caller being old_caller, key being "release/decision",
+        content being "Retired grant must not publish.", version being 2, guards being guards
+    evaluate expect_refusal with reply being retired_put, code being "denied"
+
+    expect (save_text with client being client, caller being caller, key being "activity/ping",
+        content being "Unrelated activity", version being 0) equals 4
+    variable next_entry is saved.entry
+    set next_entry.summary to "Native check still pending on SDK A."
+    value accepted is save_current_handoff with client being client, caller being caller, key being "work/42/handoff",
+        entry being next_entry, expected_version being 3
+    expect accepted.confirmed
+    expect accepted.code equals "ok"
+    expect accepted.version equals 5
+
+    value conflict is check_put with client being client, caller being caller, key being "release/decision",
+        content being "Target version mismatch.", version being 0, guards being guards
+    evaluate expect_refusal with reply being conflict, code being "conflict"
+
+    expect (save_text with client being client, caller being caller, key being "sdk/current",
+        content being "SDK B", version being 1) equals 6
+    value newer_caller is fresh_context with session_id being 2, tick being 5
+    set next_entry.summary to "This update depends on the old SDK."
+    value stale_handoff is save_current_handoff with client being client, caller being newer_caller, key being "work/42/handoff",
+        entry being next_entry, expected_version being 5
+    expect stale_handoff.confirmed
+    expect stale_handoff.code equals "dependency_conflict"
+    expect stale_handoff.version equals 0
+    expect not stale_handoff.outcome_unknown
+    expect (owner.describe_state with nothing).clock_floor equals 5
+
+    expect (save_text with client being client, caller being newer_caller, key being "test/result",
+        content being "Native check passed.", version being 0) equals 7
+    value absent_conflict_versions as array of number is [6, 0]
+    value absent_guard is build record_conditions with database_id being guards.database_id,
+        keys being ["sdk/current", "test/result"], versions being absent_conflict_versions
+    value appeared is check_put with client being client, caller being newer_caller, key being "release/decision",
+        content being "Stale absent-result assumption.", version being 2, guards being absent_guard
+    evaluate expect_refusal with reply being appeared, code being "dependency_conflict"
+
+    value current_versions as array of number is [6, 7]
+    value current_guards is build record_conditions with database_id being guards.database_id,
+        keys being guards.keys, versions being current_versions
+    value narrow is admit with owner being owner, session_id being 3, tick being 5, actions being 3, scan_limit being 1
+    value limit_caller is fresh_context with session_id being 3, tick being 5
+    value limited is check_put with client being narrow, caller being limit_caller, key being "release/decision",
+        content being "Read budget is too small.", version being 2, guards being current_guards
+    evaluate expect_refusal with reply being limited, code being "limit"
+
+    variable foreign_id as text is "00000000000000000000000000000000"
+    when foreign_id equals guards.database_id then set foreign_id to "11111111111111111111111111111111" end when
+    value foreign_guards is build record_conditions with database_id being foreign_id,
+        keys being guards.keys, versions being current_versions
+    value reader is admit with owner being owner, session_id being 4, tick being 5, actions being 1, scan_limit being 16
+    value reader_caller is fresh_context with session_id being 4, tick being 5
+    value read_only is check_put with client being reader, caller being reader_caller, key being "release/decision",
+        content being "Read grant cannot publish.", version being 2, guards being foreign_guards
+    evaluate expect_refusal with reply being read_only, code being "denied"
+    value writer is admit with owner being owner, session_id being 5, tick being 5, actions being 2, scan_limit being 16
+    value writer_caller is fresh_context with session_id being 5, tick being 5
+    value write_only is check_put with client being writer, caller being writer_caller, key being "release/decision",
+        content being "Write grant cannot test dependencies.", version being 2, guards being foreign_guards
+    evaluate expect_refusal with reply being write_only, code being "denied"
+
+    value foreign_caller is fresh_context with session_id being 2, tick being 6
+    value foreign is check_put with client being client, caller being foreign_caller, key being "release/decision",
+        content being "Another store has these versions.", version being 2, guards being foreign_guards
+    evaluate expect_refusal with reply being foreign, code being "foreign"
+
+    expect (owner.close with nothing) equals "closed"
+    say "guarded refusals preserved records"
+    give 0
+end paragraph
+
+publication_failure receives directory as text returns override integer begin paragraph
+    value opened is open_record_database with directory being directory, max_verify_bytes being 65536
+    expect opened.code equals "ready"
+    value owner is opened.owner
+    value client is admit with owner being owner, session_id being 2, tick being 3, actions being 3, scan_limit being 16
+    value caller is fresh_context with session_id being 2, tick being 4
+    value saved is load_work_entry with client being client, caller being caller, key being "work/42/handoff"
+    expect saved.code equals "ok"
+    variable entry is saved.entry
+    set entry.summary to "Matching inputs, publication interrupted."
+    say "guarded publication ready"
+    evaluate flush with nothing
+    expect (read_line with nothing) equals "write"
+    value interrupted is save_current_handoff with client being client, caller being caller, key being "work/42/handoff",
+        entry being entry, expected_version being 3
+    expect not interrupted.confirmed
+    expect interrupted.code equals "storage_error"
+    expect interrupted.outcome_unknown
+    expect interrupted.version equals 0
+    say "guarded outcome uncertain"
+    evaluate flush with nothing
+    expect (read_line with nothing) equals "again"
+    value refused is save_current_handoff with client being client, caller being caller, key being "work/42/handoff",
+        entry being entry, expected_version being 3
+    expect not refused.confirmed
+    expect refused.code equals "poisoned"
+    expect refused.outcome_unknown
+    expect refused.version equals 0
+    expect (owner.close with nothing) equals "closed"
+    say "guarded owner closed"
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    when (arg_count with nothing) does not equal 2 then give 2 end when
+    value mode is arg with index being 0
+    value directory is arg with index being 1
+    when mode equals "create" then give seed_store with directory being directory end when
+    when mode equals "resume" then give resume_store with directory being directory end when
+    when mode equals "fault" then give publication_failure with directory being directory end when
+    give 2
+end paragraph

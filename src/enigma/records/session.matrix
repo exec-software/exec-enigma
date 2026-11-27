@@ -14,6 +14,7 @@ read record_index_entry, record_key_batch, open_record_key_batch, stage_record_p
     record_key_limit, record_body_limit, record_live_bytes_limit, record_index_bytes_limit,
     record_list_bytes_limit, record_sequence_limit from enigma.records.index
 read record_access_limits, record_grant_receipt from enigma.records.authority
+read record_conditions, empty_record_conditions, check_record_conditions from enigma.records.conditions
 
 public record_limits begin record
     field max_keys as number
@@ -398,6 +399,19 @@ public record_owner begin class
 
     public put receives instance as text, caller as access_context, grant_id as number, key as text,
         content as array of override byte, expected_version as number returns record_reply of enigma.records.session::record_put_receipt begin paragraph
+        give my store_record with instance being instance, caller being caller, grant_id being grant_id, key being key,
+            content being content, expected_version being expected_version, guarded being no, guards being (empty_record_conditions with nothing)
+    end paragraph
+
+    public put_checked receives instance as text, caller as access_context, grant_id as number, key as text,
+        content as array of override byte, expected_version as number, guards as record_conditions returns record_reply of enigma.records.session::record_put_receipt begin paragraph
+        give my store_record with instance being instance, caller being caller, grant_id being grant_id, key being key,
+            content being content, expected_version being expected_version, guarded being yes, guards being guards
+    end paragraph
+
+    store_record receives instance as text, caller as access_context, grant_id as number, key as text,
+        content as array of override byte, expected_version as number, guarded as boolean,
+        guards as record_conditions returns record_reply of enigma.records.session::record_put_receipt begin paragraph
         value staged is my checkout with instance being instance
         when staged.code does not equal "ok" then
             give put_reply with effect being (failed_effect with code being staged.code, uncertain being my.outcome_unknown), version being 0, byte_length being 0
@@ -406,6 +420,15 @@ public record_owner begin class
         value access is state.authority.authorize with caller being caller, grant_id being grant_id, scope being my.scope, action being 2
         when access.code does not equal "ok" then
             give put_reply with effect being (my finish with state being state, code being "denied"), version being 0, byte_length being 0
+        end when
+        when guarded then
+            !!! A write-only grant cannot learn whether another record's
+            !!! version matches a condition. Require current read authority
+            !!! before interpreting the conditions or inspecting dependencies.
+            value reader is state.authority.authorize with caller being caller, grant_id being grant_id, scope being my.scope, action being 1
+            when reader.code does not equal "ok" then
+                give put_reply with effect being (my finish with state being state, code being "denied"), version being 0, byte_length being 0
+            end when
         end when
         value byte_length is the length of content
         when not (valid_key with key being key) or expected_version is less than 0 or expected_version is greater than (record_sequence_limit with nothing) then
@@ -416,6 +439,18 @@ public record_owner begin class
         end when
         when byte_length is greater than access.limits.max_write_bytes then
             give put_reply with effect being (my finish with state being state, code being "limit"), version being 0, byte_length being 0
+        end when
+        when guarded then
+            !!! Carry this very manifest through staging and publication.
+            !!! No separate read or client-side recheck can race this put.
+            value checked is check_record_conditions with guards being guards, database_id being state.database_id,
+                index being state.index, target_key being key, max_scan_keys being access.limits.max_scan_keys
+            when checked equals "corrupt" then
+                give put_reply with effect being (my poison with code being "corrupt", uncertain being no), version being 0, byte_length being 0
+            end when
+            when checked does not equal "ok" then
+                give put_reply with effect being (my finish with state being state, code being checked), version being 0, byte_length being 0
+            end when
         end when
         when not (valid_utf8 with content being content) then
             give put_reply with effect being (my finish with state being state, code being "invalid"), version being 0, byte_length being 0

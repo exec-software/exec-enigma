@@ -62,7 +62,8 @@ Goetic uses the profile on its pinned combined development SDK.
 
 The Matrix companion records handoffs and earlier attempts as ordinary
 application records. It checks whether named input versions changed between
-sessions under current authority. [ENI-0010](ENI-0010-work-handoffs.md)
+sessions under current authority. A guarded write can also enforce those
+versions at commit. [Handoffs](ENI-0010-work-handoffs.md) · [Guarded writes](ENI-0011-guarded-record-writes.md)
 
 ## Authority direction
 

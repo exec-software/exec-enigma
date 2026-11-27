@@ -70,8 +70,12 @@ check from one observed manifest generation.
 `describe_resume_work()` exposes the view name and version, the record
 operations it calls, and its resource ceilings. The trusted application
 chooses which views to expose. Use ordinary Matrix calls to invoke this view.
-The `begin view` text grammar and guarded write commands remain design
-directions. See the [work package](../../ext/enigma-work/README.md).
+The `begin view` text grammar remains a design direction. See the
+[work package](../../ext/enigma-work/README.md).
+
+The typed command `save_current_handoff` uses the same Matrix call pattern.
+It guards one record write against the input versions named in the handoff.
+[Guarded write contract](ENI-0011-guarded-record-writes.md)
 
 ## Future Matrix-inspired text
 
