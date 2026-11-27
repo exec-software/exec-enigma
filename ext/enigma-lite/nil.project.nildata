@@ -1,0 +1,17 @@
+nildata 1
+object
+  schema is "nil.project.v1"
+  name is "enigma-lite-example"
+  entry is "examples/main.matrix"
+  includePaths is an array
+    item is "src"
+    item is "../../src"
+    item is "../enigma-records/src"
+  end array
+  outputDirectory is "../../build/lite-example"
+  analysis is an object
+    disabledRules is an array
+    end array
+    warningsAsErrors is true
+  end object
+end object

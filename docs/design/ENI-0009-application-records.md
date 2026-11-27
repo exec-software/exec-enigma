@@ -57,6 +57,8 @@ and a synthetic create/reopen example.
 | --- | --- |
 | `create_record_database(directory, scope)` | `record_open_result` |
 | `open_record_database(directory, max_verify_bytes)` | `record_open_result` |
+| `create_bounded_record_database(directory, scope, bounds)` | `record_open_result` |
+| `open_bounded_record_database(directory, scope, bounds)` | `record_open_result` |
 | `record_owner.close()` | `closed` or `lock_error` |
 | `record_owner.describe_limits()` | `record_limits` |
 | `record_owner.describe_state()` | `record_state_view` |
@@ -75,6 +77,11 @@ and release acquired locks.
 `describe_limits()` returns `max_keys`, `max_key_bytes`, `max_body_bytes`,
 `max_live_bytes`, `max_index_bytes`, `max_grants`, `max_grant_bytes`,
 `max_manifest_bytes`, `max_envelope_bytes`, and `max_list_metadata_bytes`.
+A host can choose lower positive ceilings in a `record_bounds` value,
+with `max_keys`, `max_body_bytes`, and `max_live_bytes`. A bounded open
+requires the supplied scope and checks all three ceilings before recovery.
+The owner applies those limits through its lifetime and reports them in
+`describe_limits()`. See the [Lite profile](ENI-0012-lite-records.md).
 `describe_state()` checks current lock ownership and returns `code`,
 `database_id`, `scope`, `incarnation`, `generation`, and `clock_floor`.
 A trusted host can establish its logical time from the recovered floor before

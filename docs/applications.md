@@ -30,6 +30,12 @@ and commits a fresh incarnation before accepting calls. Replaced bodies and
 orphans still occupy disk. Goetic uses this profile on its pinned combined SDK.
 [Record contract](design/ENI-0009-application-records.md) · [Consumer validation](validation.md#goetic-record-consumer--2026-11-21)
 
+## Embed Lite for settings
+
+Use `enigma.lite` for up to 16 text settings or small records. Its
+create, open, get, put, and close calls run in the application and use
+the same durable format as full records. [Lite guide](../ext/enigma-lite/README.md)
+
 ## Run the evidence example
 
 The Matrix CLI and embedded durable evidence package share a session
